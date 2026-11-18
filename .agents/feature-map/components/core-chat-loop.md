@@ -14,7 +14,7 @@
 
 - **An end user** sends a message. The assistant can think, run tools (search,
   web, code, images, custom tools) for several steps, and then streams an answer
-  with citations. On the last allowed step (`MAX_LLM_CYCLES`, default 6; when
+  with citations. On the last allowed step (`MAX_LLM_CYCLES`, default 30; when
   code mode applies, `CODE_MODE_MAX_LLM_CYCLES`, a safety cap of 100 or
   `MAX_LLM_CYCLES` when higher) the model must answer without tools.
 - **One message at a time.** While a turn runs, the session is busy. The client
@@ -422,7 +422,7 @@ termination grace period is much shorter, so it ends running turns first
     Definitions remain where providers support this choice. Qwen, GLM, and
     Bedrock omit definitions; Bedrock converts prior tool exchanges to text.
     Image generation does not remove tools, even when the image call fails.
-    The default cap is six cycles, including the final answer cycle; code mode
+    The default cap is 30 cycles, including the final answer cycle; code mode
     uses `CODE_MODE_MAX_LLM_CYCLES` instead.
 
 
