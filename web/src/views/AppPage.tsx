@@ -47,6 +47,7 @@ import {
   PublishedFilesModal,
   PublishedFilesPanel,
 } from "@/sections/chat/PublishedFilesPanel";
+import { ChatSidePanel } from "@/sections/chat/ChatSidePanel";
 import useChatController from "@/hooks/useChatController";
 import useMultiModelChat from "@/hooks/useMultiModelChat";
 import MultiModelSelector from "@/sections/model-selector/MultiModelSelector";
@@ -65,7 +66,7 @@ import {
   useCurrentChatState,
   useIsReady,
   useIsFetchingChatMessages,
-  useDocumentSidebarVisible,
+  useSourcesPanelVisible,
   useCurrentIsStreamDraining,
   useCurrentRightPanel,
   usePublishedFilesPanelVisible,
@@ -320,18 +321,21 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   // Access chat state directly from the store
   const currentChatState = useCurrentChatState();
   const isReady = useIsReady();
-  const documentSidebarVisible = useDocumentSidebarVisible();
-  const updateCurrentDocumentSidebarVisible = useChatSessionStore(
-    (state) => state.updateCurrentDocumentSidebarVisible
-  );
-  const rightPanel = useCurrentRightPanel();
+  const sourcesPanelVisible = useSourcesPanelVisible();
   const updateCurrentRightPanel = useChatSessionStore(
     (state) => state.updateCurrentRightPanel
   );
+  const rightPanel = useCurrentRightPanel();
   const publishedFiles = useCurrentPublishedFiles();
-  // A branch without published files hides the panel
-  const publishedFilesPanelOpen =
-    usePublishedFilesPanelVisible() && publishedFiles.length > 0;
+  const publishedFilesPanelOpen = usePublishedFilesPanelVisible();
+
+  // Close the Files panel when the branch has no published files, for
+  // example after a branch switch. It stays closed until the user opens it.
+  useEffect(() => {
+    if (publishedFilesPanelOpen && publishedFiles.length === 0) {
+      updateCurrentRightPanel("publishedFiles", false);
+    }
+  }, [publishedFilesPanelOpen, publishedFiles.length, updateCurrentRightPanel]);
   const messageHistory = useCurrentMessageHistory();
   const messageTree = useCurrentMessageTree();
   // A chat opened for the first time has nothing to show until its fetch
@@ -510,14 +514,14 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   // left behind by the previous agent.
   useEffect(() => {
     // Already closed.
-    if (!documentSidebarVisible) return;
+    if (!sourcesPanelVisible) return;
 
     // Retrieval is not known yet. Closing now would need a reopen later.
     if (retrievalEnabled === null) return;
 
     // Not reading a conversation, so there are no sources to show.
     if (!appPosition.isChattable()) {
-      updateCurrentDocumentSidebarVisible(false);
+      updateCurrentRightPanel("sources", false);
       return;
     }
 
@@ -527,13 +531,13 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
     // The user picked documents by hand.
     if (selectedDocuments.length > 0) return;
 
-    updateCurrentDocumentSidebarVisible(false);
+    updateCurrentRightPanel("sources", false);
   }, [
-    documentSidebarVisible,
+    sourcesPanelVisible,
     appPosition,
     retrievalEnabled,
     selectedDocuments,
-    updateCurrentDocumentSidebarVisible,
+    updateCurrentRightPanel,
   ]);
 
   const handleResubmitLastMessage = useCallback(() => {
@@ -688,12 +692,12 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
 
   // Memoized callbacks for DocumentsSidebar
   const handleMobileDocumentSidebarClose = useCallback(() => {
-    updateCurrentDocumentSidebarVisible(false);
-  }, [updateCurrentDocumentSidebarVisible]);
+    updateCurrentRightPanel("sources", false);
+  }, [updateCurrentRightPanel]);
 
   const handleDesktopDocumentSidebarClose = useCallback(() => {
-    setTimeout(() => updateCurrentDocumentSidebarVisible(false), 300);
-  }, [updateCurrentDocumentSidebarVisible]);
+    setTimeout(() => updateCurrentRightPanel("sources", false), 300);
+  }, [updateCurrentRightPanel]);
 
   const handlePublishedFilesPanelClose = useCallback(() => {
     updateCurrentRightPanel("publishedFiles", false);
@@ -809,16 +813,16 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
 
       {isMobile ? (
         <>
-          {retrievalEnabled && documentSidebarVisible && (
+          {retrievalEnabled && sourcesPanelVisible && (
             <Modal
               open
-              onOpenChange={() => updateCurrentDocumentSidebarVisible(false)}
+              onOpenChange={() => updateCurrentRightPanel("sources", false)}
             >
               <Modal.Content>
                 <Modal.Header
                   icon={SvgFileText}
                   title={t("sourcesModal.title")}
-                  onClose={() => updateCurrentDocumentSidebarVisible(false)}
+                  onClose={() => updateCurrentRightPanel("sources", false)}
                 />
                 <Modal.Body>
                   {/* IMPORTANT: this is a memoized component, and it's very important
@@ -844,14 +848,16 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
       ) : (
         (retrievalEnabled || publishedFiles.length > 0) && (
           <RootLayout.RightPanel>
-            <div
-              className={cn(
-                "overflow-hidden transition-all duration-300 ease-in-out h-full",
-                (retrievalEnabled && documentSidebarVisible) ||
-                  publishedFilesPanelOpen
-                  ? "w-100"
-                  : "w-0"
-              )}
+            <ChatSidePanel
+              open={
+                (!!retrievalEnabled && sourcesPanelVisible) ||
+                publishedFilesPanelOpen
+              }
+              onClose={
+                rightPanel === "publishedFiles"
+                  ? handlePublishedFilesPanelClose
+                  : handleDesktopDocumentSidebarClose
+              }
             >
               {rightPanel === "publishedFiles" ? (
                 <PublishedFilesPanel
@@ -868,7 +874,7 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
                   />
                 )
               )}
-            </div>
+            </ChatSidePanel>
           </RootLayout.RightPanel>
         )
       )}

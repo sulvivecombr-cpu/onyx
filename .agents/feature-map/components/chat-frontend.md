@@ -188,17 +188,20 @@
 - **The model publishes files from its sandbox.** Each published file shows
   as a download card after the answer, with its title (else its file name),
   type and size. A click opens the file preview; HTML shows as source, never
-  as a rendered page. Each card shows only its file: a later publish of the
-  same path adds a card with no version label. The timeline step lists the
+  as a rendered page. Each card shows only its file; a later publish of the
+  same path adds a card of its own. The timeline step lists the
   files that the call asked for and how it ended. Shared chats show the same
   cards.
 - **A chat with published files gets a Files button** in the chat header
   (the shared view's header for a shared chat). It opens the Files panel in
   the right panel, where Sources also opens; one panel shows at a time. The
   panel lists the files of every answer on the selected branch, also answers
-  that are not loaded: one entry per VM path, the newest publish of it,
-  newest first, with its title or else its name. Each previews and downloads
-  like a card. On a narrow screen the panel opens as a modal.
+  that are not loaded and their subagents: one entry per VM path, the newest
+  publish of it, newest first, with its title or else its name. Each previews
+  and downloads like a card. When the branch has no files, the panel closes
+  until the user opens it again. A closed panel (Files or Sources) cannot be
+  focused; Escape closes an open one and focus returns to its opener. On a
+  narrow screen the panel opens as a modal.
 - **A user rates, copies or shares an answer.** Copy turns markdown tables into
   tab-separated text so a spreadsheet keeps the columns. Each answer table
   also has its own copy button, which writes HTML with links and full source
@@ -364,14 +367,21 @@ calls do not hide them. Published files work the same way: each
 `AgentMessage` shows them after the answer of their section
 (`sections/chat/PublishedFileCards.tsx`, which opens `PreviewModal` and
 downloads from `/api/chat/file/{file_id}`). The Files panel
-(`sections/chat/PublishedFilesPanel.tsx`) merges the session load's
-`published_files` (kept as the session's `branchPublishedFiles`) with the
-packets of the loaded branch (`lib/chat/publishedFiles.ts:latestPublishedFiles`):
-the load gives the files of messages that are not loaded, the packets give
-the rest, live publishes included. It keeps one file per path, the newest, and
-never one file ID twice, so a live stream and a reload show the same list. The store keeps one right panel for each session
-(`rightPanel`, `rightPanelVisible`); opening Sources or Files replaces the
-other. An image call does not mark the
+(`sections/chat/PublishedFilesPanel.tsx`) merges the latest load's
+`published_files` (the session's `branchPublishedFiles`) with the packets of
+the loaded branch (`lib/chat/publishedFiles.ts:latestPublishedFiles`). The
+load gives the files of unloaded messages and of subagents; the packets add
+what the load does not have yet, such as live publishes. A load entry of a
+loaded message off the branch is left out. The panel keeps the newest file
+of each path and never one file ID twice. A background subagent's files are
+not in the root stream; they appear at the next latest-page load, for
+example when the turn that its results start settles. Foreground subagent
+publishes stream nested in the root answer. `lib/chat/hooks.ts:
+useCurrentPublishedFiles` keeps the same array while the files do not
+change. The store keeps one right panel for each session (`rightPanel`,
+`rightPanelVisible`); opening Sources or Files replaces the other, and
+`sections/chat/ChatSidePanel.tsx` is the desktop panel frame that
+`AppPage`, the shared view and NRF use. An image call does not mark the
 answer as final; later search or image calls can continue the timeline.
 
 A group closes on its own parent-level `SECTION_END` or `ERROR`

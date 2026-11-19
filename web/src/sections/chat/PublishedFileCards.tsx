@@ -54,35 +54,30 @@ export function PublishedFileCards({ files }: PublishedFileCardsProps) {
       </previewModal.Provider>
 
       <Section gap={0.5} alignItems="start" height="fit">
-        {files.map((file) => {
-          return (
-            <div key={file.file_id} className="w-full max-w-md">
-              <Card padding={0} border="solid">
-                <AttachmentItemButton
-                  icon={getFileIcon(file.name)}
-                  title={file.title ?? file.name}
-                  description={[
-                    fileTypeLabel(file.name),
-                    formatBytes(file.size),
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                  aria-label={t("card.preview.ariaLabel", { name: file.name })}
-                  onClick={() => {
-                    setPreviewing(file);
-                    previewModal.toggle(true);
-                  }}
-                  rightChildren={
-                    <DownloadButton
-                      fileUrl={buildImgUrl(file.file_id)}
-                      fileName={file.name}
-                    />
-                  }
-                />
-              </Card>
-            </div>
-          );
-        })}
+        {files.map((file) => (
+          <div key={file.file_id} className="w-full max-w-md">
+            <Card padding={0} border="solid">
+              <AttachmentItemButton
+                icon={getFileIcon(file.name)}
+                title={file.title ?? file.name}
+                description={[fileTypeLabel(file.name), formatBytes(file.size)]
+                  .filter(Boolean)
+                  .join(" · ")}
+                aria-label={t("card.preview.ariaLabel", { name: file.name })}
+                onClick={() => {
+                  setPreviewing(file);
+                  previewModal.toggle(true);
+                }}
+                rightChildren={
+                  <DownloadButton
+                    fileUrl={buildImgUrl(file.file_id)}
+                    fileName={file.name}
+                  />
+                }
+              />
+            </Card>
+          </div>
+        ))}
       </Section>
     </>
   );

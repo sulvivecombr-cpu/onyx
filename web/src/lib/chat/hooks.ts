@@ -60,7 +60,6 @@ import { getUnresolvedMultiModelTurn } from "@/app/app/message/multiModel";
 import { SWR_KEYS } from "@/lib/swr-keys";
 import {
   useChatSessionStore,
-  useCurrentMessageHistory,
   useCurrentMessageTree,
 } from "@/app/app/stores/useChatSessionStore";
 import { latestPublishedFiles } from "@/lib/chat/publishedFiles";
@@ -873,27 +872,36 @@ export function useSendChatMessageFromURL({
   }, [pendingMessage, onSubmit, currentMessageFiles, deepResearch]);
 }
 
-const NO_PUBLISHED_FILES: ChatPublishedFile[] = [];
+const NO_PUBLISHED_FILES: PublishedFile[] = [];
+// The last list of each message tree, keyed by the load's list it came from
+const publishedFileLists = new WeakMap<
+  MessageTreeState,
+  { branchFiles: ChatPublishedFile[]; files: PublishedFile[] }
+>();
 
 /**
  * The files the model published on the open chat's selected branch: the
- * newest publish of each path, newest first.
+ * newest publish of each path, newest first. The array stays the same while
+ * the files do, so a packet that publishes nothing re-renders nothing.
  */
 export function useCurrentPublishedFiles(): PublishedFile[] {
-  const branchFiles = useChatSessionStore(
-    (state) =>
-      state.sessions.get(state.currentSessionId ?? "")?.branchPublishedFiles ??
-      NO_PUBLISHED_FILES
-  );
-  const messageTree = useCurrentMessageTree();
-  const messageHistory = useCurrentMessageHistory();
-  return useMemo(
-    () =>
-      latestPublishedFiles(
-        branchFiles,
-        messageTree ?? new Map(),
-        messageHistory
-      ),
-    [branchFiles, messageTree, messageHistory]
+  return useChatSessionStore(
+    useShallow((state) => {
+      const session = state.sessions.get(state.currentSessionId ?? "");
+      if (!session) return NO_PUBLISHED_FILES;
+      const { branchPublishedFiles, messageTree } = session;
+      const cached = publishedFileLists.get(messageTree);
+      if (cached?.branchFiles === branchPublishedFiles) return cached.files;
+      const files = latestPublishedFiles(
+        branchPublishedFiles,
+        messageTree,
+        getLatestMessageChain(messageTree)
+      );
+      publishedFileLists.set(messageTree, {
+        branchFiles: branchPublishedFiles,
+        files,
+      });
+      return files;
+    })
   );
 }

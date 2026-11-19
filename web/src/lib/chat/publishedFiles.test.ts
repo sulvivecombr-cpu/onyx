@@ -100,14 +100,14 @@ describe("latestPublishedFiles", () => {
     ]);
   });
 
-  test("merges the load's files of unloaded messages with live publishes by path", () => {
-    // The load lists two older answers that are not loaded, and the loaded
-    // answer, whose packets repeat its file.
+  test("merges the load's list with live publishes by path", () => {
+    // The load lists an older answer that is not loaded, and the loaded
+    // answer, with a file of its background subagent that its packets lack.
     const branchFiles = [
       loaded(published("old-report", "/w/report.md", "Report"), 2),
       loaded(published("old-chart", "/w/chart.png"), 2),
-      loaded(published("notes", "/w/notes.md"), 4),
       loaded(published("loaded", "/w/data.csv"), 6),
+      loaded(published("subagent", "/w/notes.md"), 6),
     ];
     const saved = response(6, 6, [
       publishEnd([published("loaded", "/w/data.csv")]),
@@ -123,8 +123,8 @@ describe("latestPublishedFiles", () => {
       )
     ).toEqual([
       ["new-report", "Report v2"],
+      ["subagent", null],
       ["loaded", null],
-      ["notes", null],
       ["old-chart", null],
     ]);
   });

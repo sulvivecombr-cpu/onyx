@@ -206,25 +206,25 @@ test.describe("Published files", () => {
         href: `/api/chat/file/${first.fileId}`,
       });
       // The second publish of the path has no title, so it shows its name.
-      // Cards show no version label.
       await chatPage.expectPublishedFile(second.name, {
         fileName: second.name,
         details: /MD · 2/,
         href: `/api/chat/file/${second.fileId}`,
       });
-      await expect(chatPage.aiMessage()).not.toContainText(/version/i);
       await chatPage.expectPublishedFilePreview(second.name, REPORT_TEXT);
 
       // The panel shows the newest publish of each path, also of the answer
       // that the page did not load.
       await chatPage.publishedFilesButton.click();
-      const cards = chatPage.publishedFilesPanelCards();
-      await expect(cards).toHaveCount(2);
-      await expect(cards.nth(0)).toHaveAccessibleName(`Preview ${second.name}`);
-      await expect(
-        cards.nth(0).getByRole("link", { name: "Download" })
-      ).toHaveAttribute("href", `/api/chat/file/${second.fileId}`);
-      await expect(cards.nth(1)).toContainText("Meeting notes");
+      await expect(chatPage.publishedFilesPanelCards()).toHaveCount(2);
+      await chatPage.expectPublishedFilesPanelFile(0, {
+        text: second.name,
+        href: `/api/chat/file/${second.fileId}`,
+      });
+      await chatPage.expectPublishedFilesPanelFile(1, {
+        text: "Meeting notes",
+        href: `/api/chat/file/${notes.fileId}`,
+      });
     } finally {
       await api.deleteChatSession(sessionId);
     }
@@ -256,19 +256,12 @@ test.describe("Published files", () => {
     await expect(chatPage.publishedFilesPanel).toBeVisible();
 
     // Both replies published one path: the panel shows only the newest.
-    const cards = chatPage.publishedFilesPanelCards();
-    await expect(cards).toHaveCount(1);
-    await expect(cards.nth(0)).toContainText("Q3 report, final");
-    await expect(cards.nth(0)).not.toContainText(/version/i);
-    await expect(
-      cards.nth(0).getByRole("link", { name: "Download" })
-    ).toHaveAttribute("href", `/api/chat/file/${second.fileId}`);
-
-    await cards.nth(0).click();
-    const preview = page.getByRole("dialog");
-    await expect(preview).toContainText(REPORT_TEXT);
-    await page.keyboard.press("Escape");
-    await expect(preview).toBeHidden();
+    await expect(chatPage.publishedFilesPanelCards()).toHaveCount(1);
+    await chatPage.expectPublishedFilesPanelFile(0, {
+      text: "Q3 report, final",
+      href: `/api/chat/file/${second.fileId}`,
+    });
+    await chatPage.expectPublishedFilesPanelPreview(0, REPORT_TEXT);
 
     await chatPage.publishedFilesButton.click();
     await expect(chatPage.publishedFilesPanel).toBeHidden();

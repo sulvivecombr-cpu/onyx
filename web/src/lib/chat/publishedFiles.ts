@@ -25,23 +25,27 @@ export function readPublishedFiles(packets: Packet[]): PublishedFile[] {
  * The chat's published files on the selected branch: the newest publish of
  * each path, newest first.
  *
- * `branchFiles` is the session load's list for the branch, oldest first.
- * Loaded messages are read from their packets instead, so live publishes and
- * a branch switch show at once. The load's entries of messages that are not
- * loaded come first: those messages are older than every loaded one.
+ * `branchFiles` is the latest load's list for the branch, oldest first. It
+ * also holds the files of messages that are not loaded and of the branch's
+ * background subagents. The packets of the loaded branch add what the load
+ * does not have yet, such as live publishes. A load entry of a loaded message
+ * that is no longer on the branch, after a branch switch, is left out.
  */
 export function latestPublishedFiles(
   branchFiles: readonly ChatPublishedFile[],
   messageTree: MessageTreeState,
   branch: readonly Message[]
 ): PublishedFile[] {
-  const loadedMessageIds = new Set(
-    [...messageTree.values()].map((message) => message.messageId)
+  const branchMessageIds = new Set(branch.map((message) => message.messageId));
+  const offBranchMessageIds = new Set(
+    [...messageTree.values()]
+      .map((message) => message.messageId)
+      .filter((messageId) => !branchMessageIds.has(messageId))
   );
   const seenFileIds = new Set<string>();
   const newestByPath = new Map<string, PublishedFile>();
   for (const file of [
-    ...branchFiles.filter((file) => !loadedMessageIds.has(file.message_id)),
+    ...branchFiles.filter((file) => !offBranchMessageIds.has(file.message_id)),
     ...branch.flatMap((message) => readPublishedFiles(message.packets)),
   ]) {
     if (seenFileIds.has(file.file_id)) continue;

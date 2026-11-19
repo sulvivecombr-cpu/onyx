@@ -67,7 +67,8 @@ export class ChatPage {
     this.usageLimitBanner = page.getByText(/you've reached the usage budget/i);
     this.errorBanners = page.getByTestId("chat-error-banner");
     this.publishedFilesButton = page.getByRole("button", {
-      name: "Show published files",
+      name: "Files",
+      exact: true,
     });
     this.publishedFilesPanel = page.getByRole("complementary", {
       name: "Files",
@@ -150,6 +151,31 @@ export class ChatPage {
   /** The cards of the published files panel, from the top. */
   publishedFilesPanelCards(): Locator {
     return this.publishedFilesPanel.getByRole("button", { name: /^Preview / });
+  }
+
+  /** Checks a card of the published files panel: its text and download link. */
+  async expectPublishedFilesPanelFile(
+    index: number,
+    { text, href }: { text: string; href: string }
+  ): Promise<void> {
+    const card = this.publishedFilesPanelCards().nth(index);
+    await expect(card).toContainText(text);
+    await expect(card.getByRole("link", { name: "Download" })).toHaveAttribute(
+      "href",
+      href
+    );
+  }
+
+  /** Opens a panel card's preview and checks that it shows the text. */
+  async expectPublishedFilesPanelPreview(
+    index: number,
+    text: string
+  ): Promise<void> {
+    await this.publishedFilesPanelCards().nth(index).click();
+    const preview = this.page.getByRole("dialog");
+    await expect(preview).toContainText(text);
+    await this.page.keyboard.press("Escape");
+    await expect(preview).toBeHidden();
   }
 
   answerText(text: string, index = 0): Locator {

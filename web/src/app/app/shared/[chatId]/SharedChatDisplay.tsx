@@ -30,7 +30,7 @@ import {
   PublishedFilesPanel,
 } from "@/sections/chat/PublishedFilesPanel";
 import useScreenSize from "@/hooks/useScreenSize";
-import { cn } from "@opal/utils";
+import { ChatSidePanel } from "@/sections/chat/ChatSidePanel";
 import { useLocale, useTranslations } from "next-intl";
 
 export interface SharedChatDisplayProps {
@@ -134,17 +134,15 @@ export default function SharedChatDisplay({
           )
         ) : (
           <RootLayout.RightPanel>
-            <div
-              className={cn(
-                "overflow-hidden transition-all duration-300 ease-in-out h-full",
-                publishedFilesPanelVisible ? "w-100" : "w-0"
-              )}
+            <ChatSidePanel
+              open={publishedFilesPanelVisible}
+              onClose={() => setPublishedFilesPanelVisible(false)}
             >
               <PublishedFilesPanel
                 files={publishedFiles}
                 onClose={() => setPublishedFilesPanelVisible(false)}
               />
-            </div>
+            </ChatSidePanel>
           </RootLayout.RightPanel>
         ))}
 
@@ -161,7 +159,7 @@ export default function SharedChatDisplay({
               alignItems="center"
               gap={2}
             >
-              <div className="flex flex-col items-end">
+              <Section alignItems="end" gap={0} width="fit" height="fit">
                 <Text as="p" font="secondary-body" color="text-03">
                   {t("header.sharedOn.text", {
                     date: humanReadableFormat(chatSession.time_created, locale),
@@ -172,7 +170,7 @@ export default function SharedChatDisplay({
                     {t("header.owner.text", { name: chatSession.owner_name })}
                   </Text>
                 )}
-              </div>
+              </Section>
               {publishedFiles.length > 0 && (
                 <PublishedFilesButton
                   pressed={publishedFilesPanelVisible}

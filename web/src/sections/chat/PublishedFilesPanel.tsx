@@ -70,7 +70,7 @@ export function PublishedFilesButton({
       responsiveHideText
       onClick={onClick}
       tooltip={t("openButton.tooltip")}
-      aria-label={t("openButton.tooltip")}
+      aria-label={t("openButton.label")}
       aria-pressed={pressed}
     >
       {t("openButton.label")}
@@ -99,7 +99,7 @@ export function PublishedFilesModal({
           onClose={onClose}
         />
         <Modal.Body>
-          <PublishedFilesPanel files={files} onClose={onClose} />
+          <PublishedFileCards files={files} />
         </Modal.Body>
       </Modal.Content>
     </Modal>

@@ -4,7 +4,12 @@ import {
   PacketType,
   ToolApprovalRequest,
 } from "@/app/app/services/streamingModels";
-import { useChatSessionQueue, useToolRequests } from "@/lib/chat/hooks";
+import {
+  useChatSessionQueue,
+  useCurrentPublishedFiles,
+  useToolRequests,
+} from "@/lib/chat/hooks";
+import type { Message } from "@/app/app/types";
 import { useToolRequestUi } from "@/lib/chat/toolApprovals";
 import { useChatSessionStore } from "@/app/app/stores/useChatSessionStore";
 import { refreshChatSession } from "@/lib/chat/settleChatSession";
@@ -249,5 +254,70 @@ describe("useChatSessionQueue", () => {
     expect(
       fetchMock.mock.calls.every(([input]) => String(input).endsWith("/status"))
     ).toBe(true);
+  });
+});
+
+describe("useCurrentPublishedFiles", () => {
+  function answer(packets: Packet[]): Message {
+    return {
+      nodeId: 2,
+      messageId: 2,
+      type: "assistant",
+      message: "",
+      files: [],
+      packets,
+      toolCall: null,
+      parentNodeId: null,
+    };
+  }
+
+  function setAnswer(packets: Packet[]) {
+    useChatSessionStore
+      .getState()
+      .updateSessionMessageTree(
+        "files-session",
+        new Map([[2, answer(packets)]])
+      );
+  }
+
+  const publishEnd: Packet = {
+    placement: { turn_index: 0, tab_index: 0 },
+    obj: {
+      type: PacketType.PUBLISH_FILES_END,
+      files: [
+        {
+          file_id: "file-1",
+          name: "report.md",
+          title: null,
+          path: "/w/report.md",
+          size: 10,
+          mime_type: "text/markdown",
+        },
+      ],
+      error: null,
+    },
+  };
+
+  it("keeps the same array until a packet publishes a file", () => {
+    useChatSessionStore.setState({
+      sessions: new Map(),
+      currentSessionId: "files-session",
+    });
+    useChatSessionStore.getState().createSession("files-session");
+    setAnswer([publishEnd]);
+    const { result, rerender } = renderHook(() => useCurrentPublishedFiles());
+    const first = result.current;
+    expect(first.map((file) => file.file_id)).toEqual(["file-1"]);
+
+    // A streamed answer delta replaces the packet array.
+    setAnswer([
+      publishEnd,
+      {
+        placement: { turn_index: 1, tab_index: 0 },
+        obj: { type: PacketType.MESSAGE_DELTA, content: "Done" },
+      },
+    ]);
+    rerender();
+    expect(result.current).toBe(first);
   });
 });

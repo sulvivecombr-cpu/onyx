@@ -146,9 +146,6 @@ interface ChatSessionStore {
     visible: boolean
   ) => void;
   updateCurrentRightPanel: (panel: ChatRightPanel, visible: boolean) => void;
-  updateCurrentDocumentSidebarVisible: (
-    documentSidebarVisible: boolean
-  ) => void;
   updateHasSentLocalUserMessage: (
     sessionId: string,
     hasSentLocalUserMessage: boolean
@@ -444,10 +441,6 @@ export const useChatSessionStore = create<ChatSessionStore>()((set, get) => ({
     if (currentSessionId) {
       get().updateRightPanel(currentSessionId, panel, visible);
     }
-  },
-
-  updateCurrentDocumentSidebarVisible: (documentSidebarVisible: boolean) => {
-    get().updateCurrentRightPanel("sources", documentSidebarVisible);
   },
 
   updateHasSentLocalUserMessage: (
@@ -763,7 +756,7 @@ export const useIsFetchingChatMessages = () =>
     return currentSession?.isFetchingChatMessages ?? false;
   });
 
-export const useDocumentSidebarVisible = () =>
+export const useSourcesPanelVisible = () =>
   useChatSessionStore((state) => {
     const { currentSessionId, sessions } = state;
     const currentSession = currentSessionId
