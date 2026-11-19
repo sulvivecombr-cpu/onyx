@@ -14,7 +14,7 @@ import { getMultiModelResponses } from "@/app/app/message/multiModel";
 import { useLanguageModels } from "@/lib/languageModels/hooks";
 import { buildModelProviderLookup } from "@/lib/languageModels/options";
 import OnyxInitializingLoader from "@/components/OnyxInitializingLoader";
-import { IllustrationContent, Section } from "@opal/layouts";
+import { IllustrationContent, RootLayout, Section } from "@opal/layouts";
 import SvgNotFound from "@opal/illustrations/not-found";
 import { Button, Text, useCreateModal } from "@opal/components";
 import { Agent } from "@/lib/agents/types";
@@ -23,6 +23,14 @@ import { MinimalOnyxDocument } from "@/lib/search/types";
 import PreviewModal from "@/sections/modals/PreviewModal";
 import useOnMount from "@/hooks/useOnMount";
 import SharedAppInputBar from "@/sections/input/SharedAppInputBar";
+import { latestPublishedFiles } from "@/lib/chat/publishedFiles";
+import {
+  PublishedFilesButton,
+  PublishedFilesModal,
+  PublishedFilesPanel,
+} from "@/sections/chat/PublishedFilesPanel";
+import useScreenSize from "@/hooks/useScreenSize";
+import { cn } from "@opal/utils";
 import { useLocale, useTranslations } from "next-intl";
 
 export interface SharedChatDisplayProps {
@@ -43,6 +51,9 @@ export default function SharedChatDisplay({
     setPresentingDocument(document);
     previewModal.toggle(true);
   };
+  const [publishedFilesPanelVisible, setPublishedFilesPanelVisible] =
+    useState(false);
+  const { isMobile } = useScreenSize();
 
   const isMounted = useOnMount();
   const appPosition = useAppPosition();
@@ -79,6 +90,11 @@ export default function SharedChatDisplay({
   const messages = getLatestMessageChain(messageTree);
 
   const firstMessage = messages[0];
+  const publishedFiles = latestPublishedFiles(
+    chatSession.published_files ?? [],
+    messageTree,
+    messages
+  );
 
   if (firstMessage === undefined) {
     return (
@@ -108,24 +124,64 @@ export default function SharedChatDisplay({
         )}
       </previewModal.Provider>
 
+      {publishedFiles.length > 0 &&
+        (isMobile ? (
+          publishedFilesPanelVisible && (
+            <PublishedFilesModal
+              files={publishedFiles}
+              onClose={() => setPublishedFilesPanelVisible(false)}
+            />
+          )
+        ) : (
+          <RootLayout.RightPanel>
+            <div
+              className={cn(
+                "overflow-hidden transition-all duration-300 ease-in-out h-full",
+                publishedFilesPanelVisible ? "w-100" : "w-0"
+              )}
+            >
+              <PublishedFilesPanel
+                files={publishedFiles}
+                onClose={() => setPublishedFilesPanelVisible(false)}
+              />
+            </div>
+          </RootLayout.RightPanel>
+        ))}
+
       <div className="flex flex-col h-full w-full overflow-hidden">
         <div className="flex-1 flex flex-col items-center overflow-y-auto">
           <div className="sticky top-0 z-10 flex items-center justify-between w-full bg-background-tint-01 px-8 py-4">
             <Text as="p" font="heading-headline" color="text-04">
               {chatSession.description || t("header.untitledChat.title")}
             </Text>
-            <div className="flex flex-col items-end">
-              <Text as="p" font="secondary-body" color="text-03">
-                {t("header.sharedOn.text", {
-                  date: humanReadableFormat(chatSession.time_created, locale),
-                })}
-              </Text>
-              {chatSession.owner_name && (
+            <Section
+              flexDirection="row"
+              width="fit"
+              height="fit"
+              alignItems="center"
+              gap={2}
+            >
+              <div className="flex flex-col items-end">
                 <Text as="p" font="secondary-body" color="text-03">
-                  {t("header.owner.text", { name: chatSession.owner_name })}
+                  {t("header.sharedOn.text", {
+                    date: humanReadableFormat(chatSession.time_created, locale),
+                  })}
                 </Text>
+                {chatSession.owner_name && (
+                  <Text as="p" font="secondary-body" color="text-03">
+                    {t("header.owner.text", { name: chatSession.owner_name })}
+                  </Text>
+                )}
+              </div>
+              {publishedFiles.length > 0 && (
+                <PublishedFilesButton
+                  pressed={publishedFilesPanelVisible}
+                  onClick={() =>
+                    setPublishedFilesPanelVisible((visible) => !visible)
+                  }
+                />
               )}
-            </div>
+            </Section>
           </div>
 
           {isMounted ? (

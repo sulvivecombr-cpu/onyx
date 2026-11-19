@@ -13378,12 +13378,19 @@
     },
     "publishedFiles": {
       "card": {
-        "updated": {
-          "description": "업데이트된 버전 · {details}"
-        },
         "preview": {
           "ariaLabel": "{name} 미리 보기"
         }
+      },
+      "panel": {
+        "title": "파일",
+        "closeButton": {
+          "tooltip": "파일 닫기"
+        }
+      },
+      "openButton": {
+        "label": "파일",
+        "tooltip": "게시된 파일 보기"
       }
     }
   },

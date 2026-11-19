@@ -20,7 +20,10 @@ import {
 import { SEARCH_PARAM_NAMES } from "@/app/app/services/searchParams";
 import { useLlmManager } from "@/lib/hooks";
 import { useFederatedConnectors } from "@/lib/connectors/hooks";
-import { useSendChatMessageFromURL } from "@/lib/chat/hooks";
+import {
+  useCurrentPublishedFiles,
+  useSendChatMessageFromURL,
+} from "@/lib/chat/hooks";
 import OnyxInitializingLoader from "@/components/OnyxInitializingLoader";
 import { OnyxDocument, MinimalOnyxDocument } from "@/lib/search/types";
 import { useToolConfiguration } from "@/lib/tools/hooks";
@@ -40,6 +43,10 @@ import { Modal } from "@opal/components";
 import { useSendMessageToParent } from "@/lib/extension/hooks";
 import { FederatedConnectorDetail } from "@/lib/types";
 import DocumentsSidebar from "@/sections/document-sidebar/DocumentsSidebar";
+import {
+  PublishedFilesModal,
+  PublishedFilesPanel,
+} from "@/sections/chat/PublishedFilesPanel";
 import useChatController from "@/hooks/useChatController";
 import useMultiModelChat from "@/hooks/useMultiModelChat";
 import MultiModelSelector from "@/sections/model-selector/MultiModelSelector";
@@ -60,6 +67,8 @@ import {
   useIsFetchingChatMessages,
   useDocumentSidebarVisible,
   useCurrentIsStreamDraining,
+  useCurrentRightPanel,
+  usePublishedFilesPanelVisible,
 } from "@/app/app/stores/useChatSessionStore";
 import FederatedOAuthModal from "@/components/chat/FederatedOAuthModal";
 import ChatScrollContainer, {
@@ -315,6 +324,14 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   const updateCurrentDocumentSidebarVisible = useChatSessionStore(
     (state) => state.updateCurrentDocumentSidebarVisible
   );
+  const rightPanel = useCurrentRightPanel();
+  const updateCurrentRightPanel = useChatSessionStore(
+    (state) => state.updateCurrentRightPanel
+  );
+  const publishedFiles = useCurrentPublishedFiles();
+  // A branch without published files hides the panel
+  const publishedFilesPanelOpen =
+    usePublishedFilesPanelVisible() && publishedFiles.length > 0;
   const messageHistory = useCurrentMessageHistory();
   const messageTree = useCurrentMessageTree();
   // A chat opened for the first time has nothing to show until its fetch
@@ -678,6 +695,10 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
     setTimeout(() => updateCurrentDocumentSidebarVisible(false), 300);
   }, [updateCurrentDocumentSidebarVisible]);
 
+  const handlePublishedFilesPanelClose = useCallback(() => {
+    updateCurrentRightPanel("publishedFiles", false);
+  }, [updateCurrentRightPanel]);
+
   // When no chat session exists but a project is selected, fetch the
   // total tokens for the project's files so upload UX can compare
   // against available context similar to session-based flows.
@@ -786,9 +807,9 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
 
       <FederatedOAuthModal />
 
-      {retrievalEnabled &&
-        (isMobile ? (
-          documentSidebarVisible && (
+      {isMobile ? (
+        <>
+          {retrievalEnabled && documentSidebarVisible && (
             <Modal
               open
               onOpenChange={() => updateCurrentDocumentSidebarVisible(false)}
@@ -812,24 +833,45 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
                 </Modal.Body>
               </Modal.Content>
             </Modal>
-          )
-        ) : (
+          )}
+          {publishedFilesPanelOpen && (
+            <PublishedFilesModal
+              files={publishedFiles}
+              onClose={handlePublishedFilesPanelClose}
+            />
+          )}
+        </>
+      ) : (
+        (retrievalEnabled || publishedFiles.length > 0) && (
           <RootLayout.RightPanel>
             <div
               className={cn(
                 "overflow-hidden transition-all duration-300 ease-in-out h-full",
-                documentSidebarVisible ? "w-100" : "w-0"
+                (retrievalEnabled && documentSidebarVisible) ||
+                  publishedFilesPanelOpen
+                  ? "w-100"
+                  : "w-0"
               )}
             >
-              <DocumentsSidebar
-                setPresentingDocument={setPresentingDocument}
-                modal={false}
-                closeSidebar={handleDesktopDocumentSidebarClose}
-                selectedDocuments={selectedDocuments}
-              />
+              {rightPanel === "publishedFiles" ? (
+                <PublishedFilesPanel
+                  files={publishedFiles}
+                  onClose={handlePublishedFilesPanelClose}
+                />
+              ) : (
+                retrievalEnabled && (
+                  <DocumentsSidebar
+                    setPresentingDocument={setPresentingDocument}
+                    modal={false}
+                    closeSidebar={handleDesktopDocumentSidebarClose}
+                    selectedDocuments={selectedDocuments}
+                  />
+                )
+              )}
             </div>
           </RootLayout.RightPanel>
-        ))}
+        )
+      )}
 
       <div className="w-full h-full overflow-hidden">
         {/* noPaste: the input bar already uploads pasted files itself. Without

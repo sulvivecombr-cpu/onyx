@@ -13378,12 +13378,19 @@
     },
     "publishedFiles": {
       "card": {
-        "updated": {
-          "description": "نسخة محدّثة · {details}"
-        },
         "preview": {
           "ariaLabel": "معاينة {name}"
         }
+      },
+      "panel": {
+        "title": "الملفات",
+        "closeButton": {
+          "tooltip": "إغلاق الملفات"
+        }
+      },
+      "openButton": {
+        "label": "الملفات",
+        "tooltip": "عرض الملفات المنشورة"
       }
     }
   },

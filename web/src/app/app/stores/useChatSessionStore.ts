@@ -5,6 +5,7 @@ import {
   Message,
   ChatSessionSharedStatus,
   BackendChatSession,
+  ChatPublishedFile,
   ChatStream,
   FeedbackType,
 } from "@/app/app/types";
@@ -16,6 +17,9 @@ import {
 } from "../services/messageTree";
 import { useMemo } from "react";
 import type { ChatToolOptions } from "@/lib/tools/types";
+
+/** What the chat's right panel shows: a response's sources, or the files the model published. */
+export type ChatRightPanel = "sources" | "publishedFiles";
 
 /** An error that belongs to the session, not to a saved message. */
 export interface SessionError {
@@ -41,13 +45,17 @@ interface ChatSessionData {
   // Resolves after the reader applies its final packets and message state.
   readerFinished?: Promise<void>;
   hasPerformedInitialScroll: boolean;
-  documentSidebarVisible: boolean;
+  // Kept while the panel closes, so its content stays during the transition
+  rightPanel: ChatRightPanel;
+  rightPanelVisible: boolean;
   hasSentLocalUserMessage: boolean;
 
   // Session-specific state (previously global)
   isFetchingChatMessages: boolean;
   // Paged loading: the current branch has messages above the loaded ones.
   hasOlderMessages: boolean;
+  // The latest load's files published on the branch, loaded messages or not.
+  branchPublishedFiles: ChatPublishedFile[];
   // The `approvals_version` of the load whose approval requests the chat shows.
   approvalsVersion?: string;
   isLoadingOlderMessages: boolean;
@@ -131,10 +139,13 @@ interface ChatSessionStore {
     sessionId: string,
     hasPerformedInitialScroll: boolean
   ) => void;
-  updateDocumentSidebarVisible: (
+  /** Opens `panel`, or closes it when it is the panel on show. */
+  updateRightPanel: (
     sessionId: string,
-    documentSidebarVisible: boolean
+    panel: ChatRightPanel,
+    visible: boolean
   ) => void;
+  updateCurrentRightPanel: (panel: ChatRightPanel, visible: boolean) => void;
   updateCurrentDocumentSidebarVisible: (
     documentSidebarVisible: boolean
   ) => void;
@@ -201,12 +212,14 @@ const createInitialSessionData = (
   selectedNodeIdForDocDisplay: null,
   abortController: new AbortController(),
   hasPerformedInitialScroll: true,
-  documentSidebarVisible: false,
+  rightPanel: "sources",
+  rightPanelVisible: false,
   hasSentLocalUserMessage: false,
 
   // Session-specific state defaults
   isFetchingChatMessages: false,
   hasOlderMessages: false,
+  branchPublishedFiles: [],
   isLoadingOlderMessages: false,
   uncaughtError: null,
   loadingError: null,
@@ -411,21 +424,30 @@ export const useChatSessionStore = create<ChatSessionStore>()((set, get) => ({
     get().updateSessionData(sessionId, { hasPerformedInitialScroll });
   },
 
-  updateDocumentSidebarVisible: (
+  updateRightPanel: (
     sessionId: string,
-    documentSidebarVisible: boolean
+    panel: ChatRightPanel,
+    visible: boolean
   ) => {
-    get().updateSessionData(sessionId, { documentSidebarVisible });
+    if (visible) {
+      get().updateSessionData(sessionId, {
+        rightPanel: panel,
+        rightPanelVisible: true,
+      });
+    } else if (get().sessions.get(sessionId)?.rightPanel === panel) {
+      get().updateSessionData(sessionId, { rightPanelVisible: false });
+    }
+  },
+
+  updateCurrentRightPanel: (panel: ChatRightPanel, visible: boolean) => {
+    const { currentSessionId } = get();
+    if (currentSessionId) {
+      get().updateRightPanel(currentSessionId, panel, visible);
+    }
   },
 
   updateCurrentDocumentSidebarVisible: (documentSidebarVisible: boolean) => {
-    const { currentSessionId } = get();
-    if (currentSessionId) {
-      get().updateDocumentSidebarVisible(
-        currentSessionId,
-        documentSidebarVisible
-      );
-    }
+    get().updateCurrentRightPanel("sources", documentSidebarVisible);
   },
 
   updateHasSentLocalUserMessage: (
@@ -747,7 +769,32 @@ export const useDocumentSidebarVisible = () =>
     const currentSession = currentSessionId
       ? sessions.get(currentSessionId)
       : null;
-    return currentSession?.documentSidebarVisible || false;
+    return (
+      currentSession?.rightPanelVisible === true &&
+      currentSession.rightPanel === "sources"
+    );
+  });
+
+/** The right panel on show, or the last one shown while it is closed. */
+export const useCurrentRightPanel = () =>
+  useChatSessionStore((state) => {
+    const { currentSessionId, sessions } = state;
+    const currentSession = currentSessionId
+      ? sessions.get(currentSessionId)
+      : null;
+    return currentSession?.rightPanel ?? "sources";
+  });
+
+export const usePublishedFilesPanelVisible = () =>
+  useChatSessionStore((state) => {
+    const { currentSessionId, sessions } = state;
+    const currentSession = currentSessionId
+      ? sessions.get(currentSessionId)
+      : null;
+    return (
+      currentSession?.rightPanelVisible === true &&
+      currentSession.rightPanel === "publishedFiles"
+    );
   });
 
 /**

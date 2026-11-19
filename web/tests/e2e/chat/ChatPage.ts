@@ -33,6 +33,9 @@ export class ChatPage {
   readonly scrollToBottomButton: Locator;
   readonly usageLimitBanner: Locator;
   readonly errorBanners: Locator;
+  /** The header button that opens the chat's published files panel. */
+  readonly publishedFilesButton: Locator;
+  readonly publishedFilesPanel: Locator;
 
   // Model picker: the "Add Model" button, then one pill per selected model
   readonly modelSelector: Locator;
@@ -63,6 +66,12 @@ export class ChatPage {
     });
     this.usageLimitBanner = page.getByText(/you've reached the usage budget/i);
     this.errorBanners = page.getByTestId("chat-error-banner");
+    this.publishedFilesButton = page.getByRole("button", {
+      name: "Show published files",
+    });
+    this.publishedFilesPanel = page.getByRole("complementary", {
+      name: "Files",
+    });
     this.modelSelector = page.getByTestId("model-selector");
     this.modelPills = this.modelSelector.locator(
       "button:not([aria-label='Add Model'])"
@@ -136,6 +145,11 @@ export class ChatPage {
     await expect(preview.getByRole("link", { name: "Download" })).toBeVisible();
     await this.page.keyboard.press("Escape");
     await expect(preview).toBeHidden();
+  }
+
+  /** The cards of the published files panel, from the top. */
+  publishedFilesPanelCards(): Locator {
+    return this.publishedFilesPanel.getByRole("button", { name: /^Preview / });
   }
 
   answerText(text: string, index = 0): Locator {

@@ -60,8 +60,10 @@ import { getUnresolvedMultiModelTurn } from "@/app/app/message/multiModel";
 import { SWR_KEYS } from "@/lib/swr-keys";
 import {
   useChatSessionStore,
+  useCurrentMessageHistory,
   useCurrentMessageTree,
 } from "@/app/app/stores/useChatSessionStore";
+import { latestPublishedFiles } from "@/lib/chat/publishedFiles";
 import {
   awaitsDecision,
   type AwaitingUser,
@@ -75,8 +77,12 @@ import {
   useToolRequestUi,
   type WaitingToolRequest,
 } from "@/lib/chat/toolApprovals";
-import type { Packet } from "@/app/app/services/streamingModels";
-import { APPROVAL_PENDING_ERROR_CODE, type ChatStream } from "@/app/app/types";
+import type { Packet, PublishedFile } from "@/app/app/services/streamingModels";
+import {
+  APPROVAL_PENDING_ERROR_CODE,
+  type ChatPublishedFile,
+  type ChatStream,
+} from "@/app/app/types";
 
 const EMPTY_PENDING_MESSAGES: PendingChatMessage[] = [];
 const SERVER_WORK_POLL_MS = 2000;
@@ -865,4 +871,29 @@ export function useSendChatMessageFromURL({
       deepResearch,
     });
   }, [pendingMessage, onSubmit, currentMessageFiles, deepResearch]);
+}
+
+const NO_PUBLISHED_FILES: ChatPublishedFile[] = [];
+
+/**
+ * The files the model published on the open chat's selected branch: the
+ * newest publish of each path, newest first.
+ */
+export function useCurrentPublishedFiles(): PublishedFile[] {
+  const branchFiles = useChatSessionStore(
+    (state) =>
+      state.sessions.get(state.currentSessionId ?? "")?.branchPublishedFiles ??
+      NO_PUBLISHED_FILES
+  );
+  const messageTree = useCurrentMessageTree();
+  const messageHistory = useCurrentMessageHistory();
+  return useMemo(
+    () =>
+      latestPublishedFiles(
+        branchFiles,
+        messageTree ?? new Map(),
+        messageHistory
+      ),
+    [branchFiles, messageTree, messageHistory]
+  );
 }

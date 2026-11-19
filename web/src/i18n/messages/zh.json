@@ -13378,12 +13378,19 @@
     },
     "publishedFiles": {
       "card": {
-        "updated": {
-          "description": "更新版本 · {details}"
-        },
         "preview": {
           "ariaLabel": "预览 {name}"
         }
+      },
+      "panel": {
+        "title": "文件",
+        "closeButton": {
+          "tooltip": "关闭文件"
+        }
+      },
+      "openButton": {
+        "label": "文件",
+        "tooltip": "显示已发布的文件"
       }
     }
   },

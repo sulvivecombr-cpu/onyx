@@ -13378,12 +13378,19 @@
     },
     "publishedFiles": {
       "card": {
-        "updated": {
-          "description": "Aktualisierte Version · {details}"
-        },
         "preview": {
           "ariaLabel": "Vorschau von {name}"
         }
+      },
+      "panel": {
+        "title": "Dateien",
+        "closeButton": {
+          "tooltip": "Dateien schließen"
+        }
+      },
+      "openButton": {
+        "label": "Dateien",
+        "tooltip": "Veröffentlichte Dateien anzeigen"
       }
     }
   },

@@ -45,7 +45,6 @@ test("a card shows the title, type and size, and downloads the file", () => {
           path: "/home/onyx/report.csv",
           size: 2048,
           mime_type: "text/csv",
-          version: 1,
         },
         {
           file_id: "file-2",
@@ -54,7 +53,6 @@ test("a card shows the title, type and size, and downloads the file", () => {
           path: "/home/onyx/report.csv",
           size: 512,
           mime_type: "text/csv",
-          version: 2,
         },
       ]}
     />
@@ -65,9 +63,8 @@ test("a card shows the title, type and size, and downloads the file", () => {
   expect(within(cards[0]!).getByText("Q3 report")).toBeInTheDocument();
   expect(within(cards[0]!).getByText(/^CSV · 2/)).toBeInTheDocument();
   expect(within(cards[1]!).getByText("report.csv")).toBeInTheDocument();
-  expect(
-    within(cards[1]!).getByText(/^Updated version · CSV · 512/)
-  ).toBeInTheDocument();
+  // A later publish of the path shows only its file, with no version label.
+  expect(within(cards[1]!).getByText(/^CSV · 512/)).toBeInTheDocument();
 
   const downloads = screen.getAllByRole("link", { name: "Download" });
   expect(downloads[0]).toHaveAttribute("href", "/api/chat/file/file-1");
@@ -87,7 +84,6 @@ test("an HTML file previews as source, not as a rendered page", async () => {
           path: "/home/onyx/report.html",
           size: HTML.length,
           mime_type: "text/html",
-          version: 1,
         },
       ]}
     />

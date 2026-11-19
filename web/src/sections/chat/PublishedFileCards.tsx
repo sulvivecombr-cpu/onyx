@@ -12,13 +12,8 @@ import { useFormatBytes } from "@/hooks/useFormatBytes";
 import { getFileIcon } from "@/lib/utils";
 import type { MinimalOnyxDocument } from "@/lib/search/types";
 
-export interface PublishedFileVersion extends PublishedFile {
-  // 1 for the first file of its name, then 2, 3, ...
-  version: number;
-}
-
 interface PublishedFileCardsProps {
-  files: PublishedFileVersion[];
+  files: PublishedFile[];
 }
 
 function fileTypeLabel(name: string): string {
@@ -60,20 +55,18 @@ export function PublishedFileCards({ files }: PublishedFileCardsProps) {
 
       <Section gap={0.5} alignItems="start" height="fit">
         {files.map((file) => {
-          const details = [fileTypeLabel(file.name), formatBytes(file.size)]
-            .filter(Boolean)
-            .join(" · ");
           return (
             <div key={file.file_id} className="w-full max-w-md">
               <Card padding={0} border="solid">
                 <AttachmentItemButton
                   icon={getFileIcon(file.name)}
                   title={file.title ?? file.name}
-                  description={
-                    file.version > 1
-                      ? t("card.updated.description", { details })
-                      : details
-                  }
+                  description={[
+                    fileTypeLabel(file.name),
+                    formatBytes(file.size),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                   aria-label={t("card.preview.ariaLabel", { name: file.name })}
                   onClick={() => {
                     setPreviewing(file);

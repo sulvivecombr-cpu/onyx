@@ -1235,7 +1235,7 @@ describe("with stubbed server checks", () => {
     useChatSessionStore.getState().updateSessionData("session", {
       messageTree: new Map([[-2, local]]),
       selectedNodeIdForDocDisplay: -2,
-      documentSidebarVisible: true,
+      rightPanelVisible: true,
     });
     jest.mocked(processRawChatHistory).mockReturnValue(new Map([[42, saved]]));
     await settle();
@@ -1243,7 +1243,7 @@ describe("with stubbed server checks", () => {
       useChatSessionStore.getState().sessions.get("session")
     ).toMatchObject({
       selectedNodeIdForDocDisplay: 42,
-      documentSidebarVisible: true,
+      rightPanelVisible: true,
     });
   });
 });

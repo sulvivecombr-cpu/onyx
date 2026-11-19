@@ -13378,12 +13378,19 @@
     },
     "publishedFiles": {
       "card": {
-        "updated": {
-          "description": "更新版 · {details}"
-        },
         "preview": {
           "ariaLabel": "{name} をプレビュー"
         }
+      },
+      "panel": {
+        "title": "ファイル",
+        "closeButton": {
+          "tooltip": "ファイルを閉じる"
+        }
+      },
+      "openButton": {
+        "label": "ファイル",
+        "tooltip": "公開されたファイルを表示"
       }
     }
   },

@@ -112,17 +112,24 @@ test.describe("Published files", () => {
     await chatPage.expectPublishedFilePreview("Q3 report", REPORT_TEXT);
   });
 
-  test("a saved reply shows each version of a republished file", async ({
+  test("a saved reply shows a card for each publish, and the panel the newest of each path", async ({
     page,
     chatPage,
     api,
   }) => {
     const first = report("published-file-2", "Q3 report");
     const second = report("published-file-3", null);
+    // Published by an older answer that the paged load does not hold.
+    const notes: MockPublishedFile = {
+      ...report("published-file-6", "Meeting notes"),
+      name: "notes.md",
+      path: "/home/onyx/workspaces/chat/notes.md",
+    };
     const sessionId = await api.createChatSession("Published files");
     try {
       await mockFile(page, first);
       await mockFile(page, second);
+      await mockFile(page, notes);
       const replay = [
         ...publishFilesPackets(0, [first]),
         ...publishFilesPackets(1, [second]),
@@ -172,6 +179,19 @@ test.describe("Published files", () => {
                 }),
               ],
               packets: [replay],
+              published_files: [
+                { file: notes, messageId: 0 },
+                { file: first, messageId: 2 },
+                { file: second, messageId: 2 },
+              ].map(({ file, messageId }) => ({
+                file_id: file.fileId,
+                name: file.name,
+                title: file.title,
+                path: file.path,
+                size: file.size,
+                mime_type: file.mimeType,
+                message_id: messageId,
+              })),
             },
           });
         }
@@ -186,14 +206,71 @@ test.describe("Published files", () => {
         href: `/api/chat/file/${first.fileId}`,
       });
       // The second publish of the path has no title, so it shows its name.
+      // Cards show no version label.
       await chatPage.expectPublishedFile(second.name, {
         fileName: second.name,
-        details: /Updated version · MD · 2/,
+        details: /MD · 2/,
         href: `/api/chat/file/${second.fileId}`,
       });
+      await expect(chatPage.aiMessage()).not.toContainText(/version/i);
       await chatPage.expectPublishedFilePreview(second.name, REPORT_TEXT);
+
+      // The panel shows the newest publish of each path, also of the answer
+      // that the page did not load.
+      await chatPage.publishedFilesButton.click();
+      const cards = chatPage.publishedFilesPanelCards();
+      await expect(cards).toHaveCount(2);
+      await expect(cards.nth(0)).toHaveAccessibleName(`Preview ${second.name}`);
+      await expect(
+        cards.nth(0).getByRole("link", { name: "Download" })
+      ).toHaveAttribute("href", `/api/chat/file/${second.fileId}`);
+      await expect(cards.nth(1)).toContainText("Meeting notes");
     } finally {
       await api.deleteChatSession(sessionId);
     }
+  });
+
+  test("the files panel shows the newest publish of a path across replies and previews it", async ({
+    page,
+    chatPage,
+  }) => {
+    const first = report("published-file-4", "Q3 report");
+    const second = report("published-file-5", "Q3 report, final");
+    const finalMessage = "The final report is ready.";
+    await chatPage.goto();
+    await mockFile(page, first);
+    await mockFile(page, second);
+
+    await mockChatEndpoint(page, buildMockPublishFilesStream([first], MESSAGE));
+    await sendMessage(page, "Write the quarterly report");
+    await expect(chatPage.answerText(MESSAGE)).toBeVisible();
+    await mockChatEndpoint(
+      page,
+      buildMockPublishFilesStream([second], finalMessage)
+    );
+    await sendMessage(page, "Finalize the report");
+    await expect(chatPage.answerText(finalMessage, 1)).toBeVisible();
+
+    await expect(chatPage.publishedFilesPanel).toBeHidden();
+    await chatPage.publishedFilesButton.click();
+    await expect(chatPage.publishedFilesPanel).toBeVisible();
+
+    // Both replies published one path: the panel shows only the newest.
+    const cards = chatPage.publishedFilesPanelCards();
+    await expect(cards).toHaveCount(1);
+    await expect(cards.nth(0)).toContainText("Q3 report, final");
+    await expect(cards.nth(0)).not.toContainText(/version/i);
+    await expect(
+      cards.nth(0).getByRole("link", { name: "Download" })
+    ).toHaveAttribute("href", `/api/chat/file/${second.fileId}`);
+
+    await cards.nth(0).click();
+    const preview = page.getByRole("dialog");
+    await expect(preview).toContainText(REPORT_TEXT);
+    await page.keyboard.press("Escape");
+    await expect(preview).toBeHidden();
+
+    await chatPage.publishedFilesButton.click();
+    await expect(chatPage.publishedFilesPanel).toBeHidden();
   });
 });

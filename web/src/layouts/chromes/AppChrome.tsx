@@ -72,6 +72,32 @@ import { useTierAtLeast } from "@/lib/tiers/hooks";
 import { Tier } from "@/lib/tiers/types";
 import { useFullWidthChat } from "@/providers/FullWidthChatProvider";
 import { useIncognito } from "@/providers/IncognitoProvider";
+import { useCurrentPublishedFiles } from "@/lib/chat/hooks";
+import {
+  useChatSessionStore,
+  usePublishedFilesPanelVisible,
+} from "@/app/app/stores/useChatSessionStore";
+import { PublishedFilesButton } from "@/sections/chat/PublishedFilesPanel";
+
+// ---------------------------------------------------------------------------
+// ChatPublishedFilesButton
+// ---------------------------------------------------------------------------
+
+// Its own component, so streamed packets re-render the button and not the header
+function ChatPublishedFilesButton() {
+  const hasPublishedFiles = useCurrentPublishedFiles().length > 0;
+  const visible = usePublishedFilesPanelVisible();
+  const updateCurrentRightPanel = useChatSessionStore(
+    (state) => state.updateCurrentRightPanel
+  );
+  if (!hasPublishedFiles) return null;
+  return (
+    <PublishedFilesButton
+      pressed={visible}
+      onClick={() => updateCurrentRightPanel("publishedFiles", !visible)}
+    />
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Header
@@ -547,6 +573,7 @@ function Header() {
                   currentChatSession.id === appPosition.chat() &&
                   !incognitoEnabled && (
                     <FrostedDiv className="flex shrink flex-row items-center">
+                      <ChatPublishedFilesButton />
                       <Button
                         icon={SvgShare}
                         prominence="tertiary"

@@ -712,7 +712,8 @@ test("published files show in the timeline and as download cards after the answe
     });
     expect(cards).toHaveLength(2);
     expect(screen.getByText("Q3 report")).toBeInTheDocument();
-    expect(screen.getByText(/^Updated version · CSV/)).toBeInTheDocument();
+    // Each card shows only its file: no version label.
+    expect(screen.getAllByText(/^CSV · /)).toHaveLength(2);
     expect(
       screen
         .getAllByRole("link", { name: "Download" })

@@ -295,6 +295,7 @@ export function refreshChatSession(
       store.updateSessionData(sessionId, {
         messageTree,
         hasOlderMessages: merged.hasOlderMessages,
+        branchPublishedFiles: saved.published_files ?? [],
         selectedNodeIdForDocDisplay: merged.selectedNodeIdForDocDisplay,
         approvalsVersion: saved.approvals_version,
         chatState: busy ? "streaming" : "input",
