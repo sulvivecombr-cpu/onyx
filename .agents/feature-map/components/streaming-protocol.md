@@ -233,7 +233,9 @@ new ones, or an added file), live and on replay, and its `apply_patch_end`
 says whether `write` added or updated the file. `apply_patch_start.tool_name`
 names the file tool, which titles the call (`toolDisplayHelpers.getToolName`, as in parallel tabs). `exec_end.output` is the output
 that the model got (cut to its token budget), which replaces the streamed
-preview; `session_id` is set while the command runs, and `error` (with no
+preview. When the output went to a file in the sandbox VM, it is the head and
+tail of the output with a plain note instead, without the file path and
+instructions that the model got ([[code-execution]]); `session_id` is set while the command runs, and `error` (with no
 output) when the call failed. A replayed call sends the start and `exec_end`
 only (`chat/renderer.py:ToolRenderer._sandbox_packets`). A `publish_files`
 call starts with `publish_files_start`: `files`, the `{path, title}` entries
