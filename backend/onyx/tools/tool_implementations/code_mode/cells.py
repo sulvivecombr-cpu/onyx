@@ -45,7 +45,6 @@ from onyx.tools.interface import CITATIONS_PER_TOOL_CALL, Tool
 from onyx.tools.models import (
     ChatFile,
     CustomToolCallSummary,
-    CustomToolUserFileSnapshot,
     FileReadResult,
     LlmBashExecutionResult,
     LlmPythonExecutionResult,
@@ -211,7 +210,9 @@ def durable_details(details: BaseModel | None) -> CodeModeCallDetails | None:
                 # Saved results exclude it; cleared so that the cell's call records
                 # do not hold it for the rest of the run. A copy, since `as_base`
                 # can return the live details.
-                durable = durable.model_copy(update={"structured_result": None})
+                durable = durable.with_output(
+                    durable.tool_result, spilled=durable.spilled
+                )
             # `kind` is a member of the CodeModeCallDetails union.
             return cast(CodeModeCallDetails, durable)
     return None
@@ -224,14 +225,12 @@ def _bounded(text: str, max_chars: int) -> str:
 def _bounded_details(
     details: CodeModeCallDetails | None, max_chars: int
 ) -> CodeModeCallDetails | None:
-    if isinstance(details, CustomToolCallSummary) and not isinstance(
-        details.tool_result, CustomToolUserFileSnapshot
-    ):
+    if isinstance(details, CustomToolCallSummary) and details.copies_output:
         value = details.tool_result
         text = value if isinstance(value, str) else json.dumps(value, default=str)
         if len(text) <= max_chars:
             return details
-        return details.model_copy(update={"tool_result": _bounded(text, max_chars)})
+        return details.with_output(_bounded(text, max_chars))
     if isinstance(details, (LlmPythonExecutionResult, LlmBashExecutionResult)):
         return details.model_copy(
             update={
@@ -970,13 +969,16 @@ class CodeCell:
                 if record.thread_alive
             ]
 
-    def close(self, reason: CellClosingReason) -> ToolResultAmendment | None:
+    def close(
+        self, reason: CellClosingReason, recorded: Mapping[str, ToolResultMessage]
+    ) -> ToolResultAmendment | None:
         """The final record of the cell when the response ends or the run pauses.
 
         An observation that Stop interrupted gets its result: the cell's end, or
         how it stopped. Otherwise the last saved observation, when it reports the
-        cell running, gets the closing record. None for a cell that already
-        reported its end.
+        cell running, gets the closing record after its result as the run
+        recorded it (`recorded`, by call ID), which can differ from the result
+        that the cell returned. None for a cell that already reported its end.
         """
         with self._lock:
             if self._closed:
@@ -985,7 +987,7 @@ class CodeCell:
             taken = (
                 self._take(observer, final=True)
                 if observer is not None
-                else self._closing(reason)
+                else self._closing(reason, recorded)
             )
         if isinstance(taken, ObservationCut):
             return ToolResultAmendment(
@@ -999,7 +1001,9 @@ class CodeCell:
             failure, self._hook_failure = self._hook_failure, None
             return failure
 
-    def _closing(self, reason: CellClosingReason) -> ToolResultAmendment | None:
+    def _closing(
+        self, reason: CellClosingReason, recorded: Mapping[str, ToolResultMessage]
+    ) -> ToolResultAmendment | None:
         """Close the cell: the closing record for its last saved observation, when
         that reports it running. The caller holds the lock."""
         # An observation being formatted may still report the cell running.
@@ -1008,6 +1012,7 @@ class CodeCell:
         if self._last is None:
             return None
         call_id, result, details = self._last
+        result = recorded.get(call_id, result)
         status = self._final_status()
         end = self._end
         # A terminated cell's heading says that it stopped; its end adds nothing.
@@ -1935,10 +1940,11 @@ class CodeCells:
             cell.stop("terminated")
         for cell in closing:
             cell.wait_ended()
+        recorded = {result.tool_call_id: result for result in results}
         amendments = [
             amendment
             for cell in closing
-            if (amendment := cell.close(reason)) is not None
+            if (amendment := cell.close(reason, recorded)) is not None
         ]
         for cell in closing:
             running = cell.running_calls()

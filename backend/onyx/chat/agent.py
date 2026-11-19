@@ -241,7 +241,12 @@ class ChatAgent(Agent, RestorableFeature):
         # Restored agents and subagents receive the configured tools, so the
         # sandbox tools give each of them the chat's sandbox turn.
         sandbox_turn = next(
-            (tool.turn for tool in tools if isinstance(tool, SandboxTool)), None
+            (
+                tool.turn
+                for tool in self.configured_tools
+                if isinstance(tool, SandboxTool)
+            ),
+            None,
         )
         super().__init__(
             llm,

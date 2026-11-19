@@ -264,6 +264,15 @@ class CustomToolUserFileSnapshot(BaseModel):
     file_ids: list[str]  # References to saved images or CSVs
 
 
+class SpilledOutput(BaseModel):
+    """The preview of a result whose full text went to a file in the sandbox
+    VM (tools/tool_implementations/sandbox/spill.py); the user's card shows it
+    with a note."""
+
+    head: str
+    tail: str
+
+
 class CustomToolCallSummary(BaseModel):
     type: Literal["custom_tool_result"] = "custom_tool_result"
     tool_name: str
@@ -276,6 +285,29 @@ class CustomToolCallSummary(BaseModel):
     # The server's structured content, which code mode programs receive in
     # place of `tool_result`. Live only: not saved or streamed.
     structured_result: dict[str, JsonValue] | None = Field(default=None, exclude=True)
+    # Set, with no `tool_result`, when the output went to the sandbox VM.
+    spilled: Annotated[SpilledOutput | None, OMITTED_WHEN_NONE] = None
+
+    @property
+    def copies_output(self) -> bool:
+        """Whether `tool_result` holds the tool's output, not file references."""
+        return not isinstance(self.tool_result, CustomToolUserFileSnapshot)
+
+    def with_output(
+        self,
+        output: JsonValue | CustomToolUserFileSnapshot,
+        *,
+        spilled: SpilledOutput | None = None,
+    ) -> "CustomToolCallSummary":
+        """A copy with `output` in place of the tool's output, and without the
+        live-only structured content."""
+        return self.model_copy(
+            update={
+                "tool_result": output,
+                "structured_result": None,
+                "spilled": spilled,
+            }
+        )
 
     @model_validator(mode="after")
     def restore_file_references(self) -> Self:

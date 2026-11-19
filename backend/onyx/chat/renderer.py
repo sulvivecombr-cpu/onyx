@@ -125,6 +125,8 @@ HIDDEN_TOOLS = frozenset(
     }
 )
 
+# The card's note between the head and the tail of a spilled result.
+SPILLED_OUTPUT_NOTE = "Large output: the full result was saved to the sandbox."
 # Tools whose code argument streams to the browser while the model writes it.
 CODE_ARGUMENT_TOOLS = frozenset({PythonTool.NAME, CODE_MODE_TOOL_NAME})
 # Tools whose calls observe a code mode cell; each call renders as one code mode card.
@@ -897,8 +899,11 @@ class ToolRenderer:
                 if isinstance(details.tool_result, CustomToolUserFileSnapshot)
                 else None
             )
+            spilled = details.spilled
             data: JsonValue = (
-                None
+                f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}]\n\n{spilled.tail}"
+                if spilled is not None
+                else None
                 if isinstance(details.tool_result, CustomToolUserFileSnapshot)
                 else details.tool_result
             )

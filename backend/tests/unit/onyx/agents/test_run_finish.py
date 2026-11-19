@@ -23,6 +23,7 @@ from onyx.agents.models import (
     RunStatus,
     ToolCallContext,
     ToolResultAmendment,
+    ToolResultContext,
 )
 from onyx.agents.runtime import Agent, Run
 from onyx.agents.tools import (
@@ -875,3 +876,34 @@ def test_the_on_drained_hook_of_a_suspension_waits_for_a_parked_child() -> None:
         assert drained == [True]
     finally:
         assert coordinator.close(3)
+
+
+def test_amended_and_recorded_results_go_through_prepare_tool_result() -> None:
+    prepared: list[tuple[str, bool]] = []
+
+    def prepare(context: ToolResultContext) -> ToolResult:
+        prepared.append((context.result.text, context.amended))
+        return context.result.model_copy(
+            update={"content": f"prepared {context.result.text}"}
+        )
+
+    agent = Agent(
+        FakeModelClient(_call_then(_answer)),
+        generation_context=GenerationContext(flow=LLMFlow.CHAT_RESPONSE),
+        tools=[
+            AgentTool(
+                definition=ToolDefinition(name="cell", description="", parameters={}),
+                execute=lambda _invocation: ToolResult(content="running"),
+            )
+        ],
+        on_finish=FinishHook(),
+        prepare_tool_result=prepare,
+    )
+    run, events, saved = _run(agent)
+
+    assert prepared == [("running", False), ("closed", True)]
+    amended = [event for event in events if isinstance(event, ToolResultAmendedEvent)]
+    assert [event.result.text for event in amended] == ["prepared closed"]
+    for state in (saved[0], run.snapshot()):
+        result = state.steps[0].tools[CALL_ID].result
+        assert result is not None and result.text == "prepared closed"

@@ -316,19 +316,29 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         configured tools hold a SandboxTool (its turn;
                                         restored agents and subagents get the same tools).
                                         Before the run records and streams a result of any
-                                        tool but exec_command, write_stdin, read_file and
-                                        skills_read: over RESULT_MAX_CHARS (50,000) or
-                                        RESULT_MAX_LINES (2,000), or past the step's
-                                        STEP_MAX_CHARS (200,000) of recorded results, it is
-                                        written (at most 64 MiB) to /tmp/onyx/tool-results/
+                                        tool but exec_command, write_stdin, read_file,
+                                        skills_read and the search tools (internal_search,
+                                        web_search, open_url): over RESULT_MAX_CHARS or
+                                        RESULT_MAX_LINES, or past the step's STEP_MAX_CHARS
+                                        of recorded results, and longer than
+                                        SPILL_MIN_CHARS, it is written (at most
+                                        SPILL_MAX_BYTES) to /tmp/onyx/tool-results/
                                         <step message ID>_<call ID>.txt with
-                                        write_onyx_file, which wakes the VM. The model, the
-                                        live packets and the saved row get <persisted-output>:
-                                        the path and the first 2,000 and last 1,000
-                                        characters; a CustomToolCallSummary.tool_result
-                                        becomes that text. A failed write keeps the head and
-                                        tail with a note. Calls inside a code mode program
-                                        skip it; the cell's result can spill
+                                        write_onyx_file, which wakes the VM. The model and
+                                        the saved row get <persisted-output>: the path, the
+                                        first PREVIEW_HEAD_CHARS and last PREVIEW_TAIL_CHARS
+                                        characters and how to read the rest. The details
+                                        mark it with CustomToolCallSummary.spilled (head and
+                                        tail, no tool_result; a result without details gets
+                                        one), and the card shows the preview with
+                                        renderer.SPILLED_OUTPUT_NOTE, live and on replay. A
+                                        failed write keeps the head and tail with a note.
+                                        Calls inside a code mode program skip it; the cell's
+                                        results spill, and so do the release hooks'
+                                        amendments (Run._release_amendments, amended=True,
+                                        file <...>_amended.txt): a cell's closing record
+                                        follows its observation as the run recorded it
+                                        (CodeCell.close)
   Agent.on_drained (root ChatAgent)     SandboxTurn.end: create_chat_agent passes it to the
                                         root chat agent only (bind_run_store: also to a
                                         restored root), not to subagents or deep research

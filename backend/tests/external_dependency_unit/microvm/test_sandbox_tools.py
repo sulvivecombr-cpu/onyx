@@ -39,6 +39,7 @@ from onyx.chat.process_message import (
     handle_stream_message_objects,
     run_chat_turn,
 )
+from onyx.chat.renderer import SPILLED_OUTPUT_NOTE
 from onyx.chat.stop_signal_checker import request_stop
 from onyx.configs.constants import (
     CHAT_SESSION_ID_FILE_METADATA_KEY,
@@ -143,9 +144,14 @@ from onyx.server.query_and_chat.models import (
     SendMessageRequest,
 )
 from onyx.server.query_and_chat.streaming_models import StreamingError
-from onyx.tools.constants import SPAWN_AGENT_TOOL_NAME
+from onyx.tools.constants import INTERNAL_SEARCH_TOOL_NAME, SPAWN_AGENT_TOOL_NAME
 from onyx.tools.interface import Tool
-from onyx.tools.models import CustomToolCallSummary, ToolContext, ToolOptions
+from onyx.tools.models import (
+    CustomToolCallSummary,
+    SpilledOutput,
+    ToolContext,
+    ToolOptions,
+)
 from onyx.tools.tool_constructor import construct_tools
 from onyx.tools.tool_implementations.code_mode import cells
 from onyx.tools.tool_implementations.sandbox import sandbox_tools
@@ -2732,24 +2738,34 @@ def test_a_large_mcp_result_spills_to_the_vm_and_the_history_keeps_the_preview(
 
     full = json.dumps({"tool_result": _big("big")})
     shown = last_tool_text(llm, "big")
-    # The write woke the VM, which no call had started.
-    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    ref = chat.ref(db_session)
+    # No call started the VM; the write did.
+    assert [request[0] for request in node.agent.create_requests] == [
+        str(ref.sandbox_id)
+    ]
+    [(path, data)] = _spills(node, ref).items()
     assert data == full.encode()
     assert path.endswith("_big.txt")
     assert shown == (
         f'<persisted-output path="{path}" bytes={len(full)} lines=1>\n'
         f"Preview (first 2,000 characters):\n{full[:2000]}\n"
         f"Preview (last 1,000 characters):\n{full[-1000:]}\n"
-        "The full output is saved. Use exec_command (grep, sed, head, tail) on "
-        "the path for the rest.\n</persisted-output>"
+        "The full output is in the file while the sandbox runs. Use exec_command "
+        "(grep, sed, head, tail) on the path for the rest. If the file is "
+        "missing, the sandbox restarted; call the tool again.\n</persisted-output>"
     )
-    # The history keeps only what the model got, in the content and the details.
+    # The history keeps only the preview: the content, and the details that
+    # mark the result as spilled.
     [saved] = _saved_results(db_session, chat.chat_session_id)
     assert saved.content == shown
     assert isinstance(saved.details, CustomToolCallSummary)
-    assert saved.details.tool_result == shown
+    assert saved.details.tool_result is None
+    assert saved.details.spilled == SpilledOutput(head=full[:2000], tail=full[-1000:])
+    # The card shows the preview with a note, not the model's instructions.
     live = _custom_tool_deltas(parts)
-    assert [delta.data for delta in live] == [shown]
+    assert [delta.data for delta in live] == [
+        f"{full[:2000]}\n\n[{SPILLED_OUTPUT_NOTE}]\n\n{full[-1000:]}"
+    ]
     [replayed] = chat.replayed(db_session)
     assert _custom_tool_deltas(replayed) == live
 
@@ -2812,6 +2828,67 @@ def test_a_large_result_that_the_vm_cannot_take_keeps_its_head_and_tail(
     assert saved.content == shown
     assert isinstance(saved.details, CustomToolCallSummary)
     assert saved.details.tool_result == shown
+    assert saved.details.spilled is None
+
+
+@pytest.mark.usefixtures("node")
+def test_a_large_internal_search_result_stays_whole(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    _offer_mcp_tool(monkeypatch, INTERNAL_SEARCH_TOOL_NAME, _big)
+    llm = ChatLLM(
+        [tool_step(INTERNAL_SEARCH_TOOL_NAME, "found", {}), Delta(content="Done.")]
+    )
+    chat.send(llm)
+
+    assert last_tool_text(llm, "found") == json.dumps({"tool_result": _big("found")})
+    assert _spills(node, chat.ref(db_session)) == {}
+
+
+@pytest.mark.usefixtures("node")
+def test_a_cell_that_closes_after_a_large_observation_keeps_only_previews(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    amended: list[ToolResult] = []
+    apply_amendments = Run._apply_amendments
+
+    def captured(run: Run, amendments: Sequence[Any]) -> None:
+        amended.extend(amendment.result for amendment in amendments)
+        apply_amendments(run, amendments)
+
+    monkeypatch.setattr(Run, "_apply_amendments", captured)
+    # The observation at yield_control is over the line limit; the cell runs
+    # on until the response ends and closes it.
+    program = (
+        "import asyncio\n"
+        "for i in range(3000):\n"
+        "    print(f'row {i}')\n"
+        "yield_control()\n"
+        "await asyncio.sleep(60)\n"
+    )
+    llm = ChatLLM([code_step("start", program), Delta(content="Started.")])
+    chat.send(llm, code_mode=True)
+
+    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    assert b"row 2700\n" in data
+    [closing] = amended
+    [saved] = _saved_results(db_session, chat.chat_session_id)
+    # The closing record follows the preview, as the model got it.
+    observed = last_tool_text(llm, "start")
+    assert observed.startswith(f'<persisted-output path="{path}" ')
+    assert closing.content.startswith(f"{observed}\n\n")
+    assert saved.content == closing.content
+    assert "row 2700\n" not in closing.content
+
+    follow_up = ChatLLM([Delta(content="It ran.")])
+    chat.send(follow_up, code_mode=True)
+    assert last_tool_text(follow_up, "start") == closing.content
 
 
 @pytest.mark.usefixtures("node")

@@ -4,7 +4,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, nullcontext
 from contextvars import copy_context
 from datetime import datetime, timezone
 from functools import partial
@@ -809,20 +809,25 @@ class Run:
     ) -> None:
         """Record the result of calls, after `prepare_tool_result` replaces
         it; `finish_tool` later ends them. Call without the execution lock."""
-        with self._result_lock:
-            if self._prepare_tool_result is not None:
-                with self.execution_lock:
-                    self.cancellation_signal.check()
-                    record = self._state.steps[self._progress.step_index]
-                    message_id = record.message.id
-                    if message_id is None:
-                        raise RuntimeError("Tool execution requires a message ID")
-                    step_results = tuple(
+        prepare = self._prepare_tool_result
+        with self._result_lock if prepare is not None else nullcontext():
+            with self.execution_lock:
+                self.cancellation_signal.check()
+                record = self._state.steps[self._progress.step_index]
+                message_id = record.message.id
+                if message_id is None:
+                    raise RuntimeError("Tool execution requires a message ID")
+                step_results = (
+                    tuple(
                         execution.result
                         for execution in record.tools.values()
                         if execution.result is not None
                     )
-                result = self._prepare_tool_result(
+                    if prepare is not None
+                    else ()
+                )
+            if prepare is not None:
+                result = prepare(
                     ToolResultContext(
                         message_id=message_id,
                         calls=tuple(calls),
@@ -838,10 +843,6 @@ class Run:
                         "Tool batch completed after its run closed: %s", self.id
                     )
                     raise AgentCancelled()
-                record = self._state.steps[self._progress.step_index]
-                message_id = record.message.id
-                if message_id is None:
-                    raise RuntimeError("Tool execution requires a message ID")
                 for call in calls:
                     execution = record.tools[call.id]
                     execution.result = _tool_result_message(result, call, message_id)
@@ -1512,16 +1513,65 @@ class Run:
                 for message in self._state.messages
                 if isinstance(message, ToolResultMessage)
             ]
+        error: Exception | None = None
         try:
-            return hook(results), None
+            amendments = hook(results)
         except ReleaseFailed as failed:
-            return failed.amendments, failed.error
+            amendments, error = failed.amendments, failed.error
         except AgentCancelled:
             logger.info("Run release hook stopped for cancellation: %s", self.id)
             return [], None
         except Exception:
             logger.exception("Run release hook failed: %s", self.id)
             return [], None
+        prepare = self._prepare_tool_result
+        if prepare is None or not amendments:
+            return amendments, error
+        # Amended results go through prepare_tool_result as recorded ones do.
+        prepared: list[ToolResultAmendment] = []
+        with self._result_lock:
+            for amendment in amendments:
+                with self.execution_lock:
+                    located = next(
+                        (
+                            (step, call)
+                            for step in self._state.steps
+                            for call in step.message.tool_calls
+                            if call.id == amendment.call_id
+                        ),
+                        None,
+                    )
+                    message_id = located[0].message.id if located else None
+                    if located is None or message_id is None:
+                        # _apply_amendments logs and skips it.
+                        prepared.append(amendment)
+                        continue
+                    step, call = located
+                    step_results = tuple(
+                        execution.result
+                        for call_id, execution in step.tools.items()
+                        if call_id != call.id and execution.result is not None
+                    )
+                try:
+                    result = prepare(
+                        ToolResultContext(
+                            message_id=message_id,
+                            calls=(call,),
+                            result=amendment.result,
+                            step_results=step_results,
+                            amended=True,
+                        )
+                    )
+                except Exception:
+                    # The call keeps its recorded result.
+                    logger.exception(
+                        "Run %s could not prepare the amendment of %s",
+                        self.id,
+                        amendment.call_id,
+                    )
+                    continue
+                prepared.append(amendment.model_copy(update={"result": result}))
+        return prepared, error
 
     def _apply_amendments(self, amendments: Sequence[ToolResultAmendment]) -> None:
         """Set the final results of started calls; the caller holds the execution lock.

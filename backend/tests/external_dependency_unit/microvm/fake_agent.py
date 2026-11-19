@@ -163,7 +163,7 @@ class FakeHostAgent(hostagent_pb2_grpc.HostAgentServicer):
         self.path_stats: dict[tuple[str, str, str], sandboxd_pb2.PathStat] = {}
         # The data message sizes of each WriteFile, in order.
         self.write_chunk_sizes: list[list[int]] = []
-        # WriteFile fails with this reason (for example, a full disk).
+        # WriteFile fails with this reason.
         self.write_file_error: SandboxDaemonErrorReason | None = None
         # ZipFiles fails with LIMIT_EXCEEDED over this many input bytes.
         self.zip_max_input_bytes: int | None = None

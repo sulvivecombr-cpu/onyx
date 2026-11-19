@@ -8,8 +8,14 @@ import re
 from onyx.agents.models import ToolResultContext
 from onyx.llm.models import ToolResult
 from onyx.server.features.build.sandbox.harness_base import ONYX_VM_FILES_ROOT
-from onyx.tools.constants import FILE_READER_TOOL_NAME, SKILLS_READ_TOOL_NAME
-from onyx.tools.models import CustomToolCallSummary, CustomToolUserFileSnapshot
+from onyx.tools.constants import (
+    FILE_READER_TOOL_NAME,
+    INTERNAL_SEARCH_TOOL_NAME,
+    OPEN_URL_TOOL_NAME,
+    SKILLS_READ_TOOL_NAME,
+    WEB_SEARCH_TOOL_NAME,
+)
+from onyx.tools.models import CustomToolCallSummary, SpilledOutput
 from onyx.tools.tool_implementations.sandbox.sandbox_tools import (
     ExecCommandTool,
     WriteStdinTool,
@@ -21,8 +27,8 @@ from onyx.utils.logger import setup_logger
 logger = setup_logger()
 
 TOOL_RESULTS_DIR = f"{ONYX_VM_FILES_ROOT}/tool-results"
-# Sizes are in characters, which track the model's context cost more closely
-# than UTF-8 bytes and cost nothing to measure.
+# Sizes are in characters, which cost nothing to measure. They do not bound
+# tokens: text such as CJK takes about one token for each character.
 RESULT_MAX_CHARS = 50_000
 RESULT_MAX_LINES = 2_000
 # All results of one step; a result that arrives after the budget is used up
@@ -30,15 +36,21 @@ RESULT_MAX_LINES = 2_000
 STEP_MAX_CHARS = 200_000
 PREVIEW_HEAD_CHARS = 2_000
 PREVIEW_TAIL_CHARS = 1_000
+# A shorter result stays whole: its preview would save less than half of it.
+SPILL_MIN_CHARS = 2 * (PREVIEW_HEAD_CHARS + PREVIEW_TAIL_CHARS)
 SPILL_MAX_BYTES = 64 << 20
 # Exec output spills from the tools' own output buffer; read_file and
-# skills_read page through their text, so a spill would only be read back.
+# skills_read page through their text, so a spill would only be read back;
+# search results keep their own limits and citations.
 _KEEPS_RESULT = frozenset(
     {
         ExecCommandTool.NAME,
         WriteStdinTool.NAME,
         FILE_READER_TOOL_NAME,
         SKILLS_READ_TOOL_NAME,
+        INTERNAL_SEARCH_TOOL_NAME,
+        WEB_SEARCH_TOOL_NAME,
+        OPEN_URL_TOOL_NAME,
     }
 )
 _UNSAFE_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_.-]")
@@ -48,14 +60,12 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     """The result, or, when it is too large, a preview and the path of the
     file in the VM that holds its full text. The write wakes the VM if needed;
     when it fails, the model gets the preview's head and tail with a note.
-    Writing the same call's result again replaces the file."""
+    Writing the same call's result again replaces the file; an amendment
+    writes its own file."""
     result = context.result
     text = result.content
     call = context.calls[0]
-    # A result that fits in the preview stays whole.
-    if call.name in _KEEPS_RESULT or len(text) <= (
-        PREVIEW_HEAD_CHARS + PREVIEW_TAIL_CHARS
-    ):
+    if call.name in _KEEPS_RESULT or len(text) <= SPILL_MIN_CHARS:
         return result
     step_chars = sum(len(recorded.content) for recorded in context.step_results)
     lines = text.count("\n") + (not text.endswith("\n"))
@@ -70,9 +80,13 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     tail = text[-PREVIEW_TAIL_CHARS:]
     # Call IDs are unique only within one conversation, and one VM serves all
     # of the user's chats and subagents, so the step's message ID leads.
-    name = _UNSAFE_NAME_CHARACTERS.sub("_", f"{context.message_id}_{call.id}")
+    name = _UNSAFE_NAME_CHARACTERS.sub(
+        "_",
+        f"{context.message_id}_{call.id}" + ("_amended" if context.amended else ""),
+    )
     path = f"{TOOL_RESULTS_DIR}/{name}.txt"
     data = text.encode()
+    spilled: SpilledOutput | None = None
     try:
         turn.sandbox.write_onyx_file(turn.start_call(), path, data[:SPILL_MAX_BYTES])
     except Exception:
@@ -94,17 +108,24 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
             f'<persisted-output path="{path}" bytes={len(data)} lines={lines}>\n'
             f"Preview (first {PREVIEW_HEAD_CHARS:,} characters):\n{head}\n"
             f"Preview (last {PREVIEW_TAIL_CHARS:,} characters):\n{tail}\n"
-            f"{cut}The full output is saved. Use {ExecCommandTool.NAME} (grep, "
-            "sed, head, tail) on the path for the rest.\n"
-            "</persisted-output>"
+            f"{cut}The full output is in the file while the sandbox runs. Use "
+            f"{ExecCommandTool.NAME} (grep, sed, head, tail) on the path for the "
+            "rest. If the file is missing, the sandbox restarted; call the tool "
+            "again.\n</persisted-output>"
         )
-    # A custom or MCP tool's output in the details becomes what the model
-    # got, so the saved history never holds text that the model did not get.
+        spilled = SpilledOutput(head=head, tail=tail)
+    # A custom or MCP tool's output in the details becomes the preview, so the
+    # saved history does not hold the text that the model did not get. Python
+    # and code mode details keep their own bounded output.
     details = result.details
-    if isinstance(details, CustomToolCallSummary) and not isinstance(
-        details.tool_result, CustomToolUserFileSnapshot
-    ):
-        details = details.model_copy(
-            update={"tool_result": content, "structured_result": None}
+    if isinstance(details, CustomToolCallSummary) and details.copies_output:
+        details = details.with_output(
+            None if spilled is not None else content, spilled=spilled
+        )
+    elif details is None and spilled is not None:
+        # The card of a result without details shows its content; it shows
+        # the preview without the model's instructions instead.
+        details = CustomToolCallSummary(
+            tool_name=call.name, response_type="text", tool_result=None, spilled=spilled
         )
     return result.model_copy(update={"content": content, "details": details})

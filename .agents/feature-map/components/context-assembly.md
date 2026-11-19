@@ -287,7 +287,10 @@ counts what is sent, not the stored token counts.
    reports it as `UNKNOWN_ERROR`, not `CONTEXT_TOO_LONG`. A new large fixed
    element makes this error more frequent. In a chat with a sandbox, large
    tool results go to a file in the VM before they reach the history
-   ([[code-execution]], `tools/tool_implementations/sandbox/spill.py`), so they do not cause it there.
+   ([[code-execution]], `tools/tool_implementations/sandbox/spill.py`), so
+   the results of one step do not cause it there. The results that keep their
+   text still can: exec output, `read_file`, `skills_read` and the search
+   tools.
 6. `forgotten-files-need-metadata` **A forgotten-files notice needs file
    metadata.** `chat/process_message.py:prepare_chat_turn` clears the metadata
    map when the persona has no file reader tool. Then a file that compaction or

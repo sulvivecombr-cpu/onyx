@@ -399,7 +399,8 @@ Their control functions, such as `think_tool`, `generate_report` and
    result, `Agent.prepare_tool_result` can replace it, one result at a time in
    completion order; chat's sandbox spill uses it ([[code-execution]]). After a
    cancel between `Run.record_tool_results` and `finish_tool`, the saved
-   result is the raw result and no `ToolEndEvent` is sent. A tool whose calls must not overlap
+   result is the recorded result, before `after_tool_call`, and no
+   `ToolEndEvent` is sent. A tool whose calls must not overlap
    returns `ToolExecutionMode.SEQUENTIAL` from `execution_mode`, as
    `MemoryTool` does. This orders only calls with the same name, or with the
    same `sequence_group` (the sandbox file tools share one): each starts
