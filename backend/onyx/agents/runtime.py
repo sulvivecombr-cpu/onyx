@@ -1536,6 +1536,9 @@ class Run:
             return amendments, error
         # Amended results go through prepare_tool_result as recorded ones do.
         prepared: list[ToolResultAmendment] = []
+        # The results that earlier amendments of this release prepared, by
+        # call ID; later amendments see them in place of the recorded ones.
+        replaced: dict[str, ToolResultMessage] = {}
         with self._result_lock:
             for amendment in amendments:
                 with self.execution_lock:
@@ -1555,9 +1558,11 @@ class Run:
                         continue
                     step, call = located
                     step_results = tuple(
-                        execution.result
+                        current
                         for call_id, execution in step.tools.items()
-                        if call_id != call.id and execution.result is not None
+                        if call_id != call.id
+                        and (current := replaced.get(call_id, execution.result))
+                        is not None
                     )
                 try:
                     result = prepare(
@@ -1569,6 +1574,14 @@ class Run:
                             amended=True,
                         )
                     )
+                except AgentCancelled:
+                    # The run still ends; the call keeps its recorded result.
+                    logger.info(
+                        "Run %s stopped preparing the amendment of %s",
+                        self.id,
+                        amendment.call_id,
+                    )
+                    continue
                 except Exception:
                     # The call keeps its recorded result.
                     logger.exception(
@@ -1577,6 +1590,7 @@ class Run:
                         amendment.call_id,
                     )
                     continue
+                replaced[call.id] = _tool_result_message(result, call, message_id)
                 prepared.append(amendment.model_copy(update={"result": result}))
         return prepared, error
 

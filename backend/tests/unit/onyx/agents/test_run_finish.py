@@ -907,3 +907,76 @@ def test_amended_and_recorded_results_go_through_prepare_tool_result() -> None:
     for state in (saved[0], run.snapshot()):
         result = state.steps[0].tools[CALL_ID].result
         assert result is not None and result.text == "prepared closed"
+
+
+def test_a_cancelled_amendment_preparation_keeps_the_recorded_result() -> None:
+    def prepare(context: ToolResultContext) -> ToolResult:
+        if context.amended:
+            raise AgentCancelled()
+        return context.result
+
+    agent = Agent(
+        FakeModelClient(_call_then(_answer)),
+        generation_context=GenerationContext(flow=LLMFlow.CHAT_RESPONSE),
+        tools=[
+            AgentTool(
+                definition=ToolDefinition(name="cell", description="", parameters={}),
+                execute=lambda _invocation: ToolResult(content="running"),
+            )
+        ],
+        on_finish=FinishHook(),
+        prepare_tool_result=prepare,
+    )
+    run, events, saved = _run(agent)
+
+    assert run.status == RunStatus.COMPLETE
+    assert not any(isinstance(event, ToolResultAmendedEvent) for event in events)
+    assert len(saved) == 1
+    result = saved[0].steps[0].tools[CALL_ID].result
+    assert result is not None and result.text == "running"
+
+
+def test_an_amendment_sees_the_results_that_earlier_amendments_prepared() -> None:
+    call_ids = ("first", "second")
+    siblings: dict[str, list[str]] = {}
+
+    def reply(
+        request: GenerationRequest, _signal: CancellationSignal
+    ) -> AssistantMessage:
+        if request.messages and isinstance(request.messages[-1], ToolResultMessage):
+            return _answer()
+        return AssistantMessage(
+            content=[
+                ToolCall(id=call_id, name="cell", arguments={}) for call_id in call_ids
+            ]
+        )
+
+    def prepare(context: ToolResultContext) -> ToolResult:
+        if not context.amended:
+            return context.result
+        siblings[context.calls[0].id] = [
+            recorded.text for recorded in context.step_results
+        ]
+        return context.result.model_copy(
+            update={"content": f"prepared {context.calls[0].id}"}
+        )
+
+    agent = Agent(
+        FakeModelClient(reply),
+        generation_context=GenerationContext(flow=LLMFlow.CHAT_RESPONSE),
+        tools=[
+            AgentTool(
+                definition=ToolDefinition(name="cell", description="", parameters={}),
+                execute=lambda _invocation: ToolResult(content="running"),
+            )
+        ],
+        on_finish=lambda _results: [
+            ToolResultAmendment(call_id=call_id, result=ToolResult(content="closed"))
+            for call_id in call_ids
+        ],
+        prepare_tool_result=prepare,
+    )
+    run, _events, _saved = _run(agent)
+
+    assert run.status == RunStatus.COMPLETE
+    assert siblings == {"first": ["running"], "second": ["prepared first"]}
