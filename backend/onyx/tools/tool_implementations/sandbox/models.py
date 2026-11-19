@@ -175,11 +175,11 @@ class PublishedFile(BaseModel):
     """A file that publish_files copied from the VM to the file store."""
 
     file_id: str
-    # The file name, which the download keeps. Publishes of one name are
-    # versions of one file.
+    # The file name, which the download keeps.
     name: str
     title: str | None = None
-    # Absolute and normalized.
+    # Absolute and normalized; the file's identity. A later publish of a path
+    # is the newer copy of that file.
     path: str
     size: int
     mime_type: str

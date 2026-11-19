@@ -309,7 +309,7 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         deletes the files that the call saved: all or none.
                                         Saves PublishedFiles (file ID, name, title, absolute
                                         path, size, MIME type); each publish is a new file,
-                                        and files of one name are versions of one file.
+                                        and the path is the file's identity.
                                         save_chat_turn adds the files to the response's
                                         ChatMessage.files ([[chat-persistence]])
   Agent.on_drained (root ChatAgent)     SandboxTurn.end: create_chat_agent passes it to the

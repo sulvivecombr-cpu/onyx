@@ -22,6 +22,7 @@ from onyx.server.features.action_policies.models import DecisionBody
 from onyx.server.query_and_chat.streaming_models import Packet, StreamingError
 from onyx.tools.models import ToolOptions
 from onyx.tools.tool_implementations.question.models import ToolQuestionAnswer
+from onyx.tools.tool_implementations.sandbox.models import PublishedFile
 from onyx.utils.postgres_sanitization import sanitize_string
 
 AUTO_PLACE_AFTER_LATEST_MESSAGE = -1
@@ -497,6 +498,13 @@ class ChatSessionProcessingStatus(BaseModel):
     approvals_version: str = ""
 
 
+class ChatPublishedFile(PublishedFile):
+    """A file that the model published on the current branch."""
+
+    # The answer that published the file.
+    message_id: int
+
+
 class ChatSessionDetailResponse(BaseModel):
     chat_session_id: UUID
     description: str | None
@@ -521,6 +529,9 @@ class ChatSessionDetailResponse(BaseModel):
     incognito: bool = False
     # Set on a paged load when the current branch has messages before the page.
     has_older_messages: bool = False
+    # Every file published on the current branch, also outside a paged load's
+    # page, oldest first.
+    published_files: list[ChatPublishedFile] = Field(default_factory=list)
     # The owner's saved tool options; NULL means the agent's tools.
     tool_options: ToolOptions | None = None
     # The status route's `approvals_version` for the requests this load shows.

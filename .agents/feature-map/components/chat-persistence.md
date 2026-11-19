@@ -49,7 +49,8 @@
   its own.
 - **An API caller** reads a session with `GET /chat/get-chat-session/{id}`. The
   response holds the messages and, for each answer, the packets that rebuild
-  it. A send that names a parent off the active branch fails with "not on the
+  it. `published_files` lists every file that the model published on the
+  current branch, also outside a paged load's page. A send that names a parent off the active branch fails with "not on the
   latest mainline".
 
 ---
@@ -101,6 +102,8 @@ ChatResponsePersistence.save               chat/persistence.py; for USAGE_ONLY i
                                            response's published files in
                                            ChatMessage.files
 GET /chat/get-chat-session/{id}
+  get_current_branch                       the current branch, from one query of
+                                           the session's message links
   get_chat_message_page_ids                with `limit`: one page of the current
                                            branch and the children of its messages;
                                            the latest page reaches back to each
@@ -108,6 +111,11 @@ GET /chat/get-chat-session/{id}
                                            (db/chat_response.py:waiting_approval_reply_ids)
   get_chat_messages_by_session             that page, or all branches without
                                            `limit`; two ToolCall levels
+  get_published_files_on_branch            one query: the CHAT_ARTIFACT files of
+                                           the branch's answers' ChatMessage.files,
+                                           with path and title from their tool
+                                           calls' saved PublishedFiles, at any
+                                           depth (code mode nests them)
   translate_assistant_message_to_packets   runtime rows: read_chat_execution,
                                            read_response_replay_data ->
                                            chat/presentation.py:replay_response;

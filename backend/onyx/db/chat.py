@@ -1,6 +1,6 @@
 from collections.abc import Collection, Sequence
 from datetime import datetime, timedelta, timezone
-from typing import NoReturn, Tuple
+from typing import NamedTuple, NoReturn, Tuple
 from uuid import UUID
 
 from pydantic import TypeAdapter
@@ -9,6 +9,9 @@ from sqlalchemy import (
     Row,
     any_,
     bindparam,
+    case,
+    cast,
+    column,
     delete,
     desc,
     func,
@@ -16,6 +19,8 @@ from sqlalchemy import (
     nullsfirst,
     or_,
     select,
+    true,
+    type_coerce,
     update,
 )
 from sqlalchemy.dialects import postgresql
@@ -43,7 +48,7 @@ from onyx.chat.models import (
 )
 from onyx.chat.response import message_thinking
 from onyx.configs.chat_configs import HARD_DELETE_CHATS
-from onyx.configs.constants import ANONYMOUS_USER_UUID, MessageType
+from onyx.configs.constants import ANONYMOUS_USER_UUID, FileOrigin, MessageType
 from onyx.context.search.models import InferenceSection, SavedSearchDoc
 from onyx.context.search.models import SearchDoc as ServerSearchDoc
 from onyx.db.document_set import require_document_set_access
@@ -77,9 +82,11 @@ from onyx.llm.override_models import LLMOverride, PromptOverride
 from onyx.server.query_and_chat.models import (
     AUTO_PLACE_AFTER_LATEST_MESSAGE,
     ChatMessageDetail,
+    ChatPublishedFile,
 )
 from onyx.server.query_and_chat.streaming_models import StreamingError
 from onyx.tools.models import PluginEntry, ToolOptions
+from onyx.tools.tool_implementations.sandbox.models import PublishedFiles
 from onyx.utils.logger import setup_logger
 from onyx.utils.postgres_sanitization import sanitize_string
 
@@ -826,27 +833,16 @@ def get_chat_messages_by_session(
     return list(result)
 
 
-def get_chat_message_page_ids(
-    chat_session_id: UUID,
-    db_session: Session,
-    limit: int,
-    before_message_id: int | None = None,
-    waiting_reply_ids: Collection[int] = (),
-) -> tuple[set[int], bool]:
-    """One page of a session's current branch, for paged loading.
+class CurrentBranch(NamedTuple):
+    """A session's current branch: the chain of `latest_child_message_id` from
+    the root, oldest first, with the links that a page of it needs."""
 
-    The page holds the last `limit` messages of the current branch (the chain
-    of `latest_child_message_id` from the root), or of the part of it before
-    `before_message_id`. It also holds every child of those messages, so a
-    branch switcher and multi-model replies have their siblings, including the
-    siblings of the first message of the next, newer page.
+    message_ids: list[int]
+    parent_by_id: dict[int, int | None]
+    children_by_parent: dict[int, list[int]]
 
-    The latest page also reaches back to the question of each of
-    `waiting_reply_ids` that is on the branch, or a reply to it.
 
-    Returns the message ids and whether the branch has older messages. A
-    `before_message_id` that is not on the current branch gives an empty page.
-    """
+def get_current_branch(chat_session_id: UUID, db_session: Session) -> CurrentBranch:
     rows = db_session.execute(
         select(
             ChatMessage.id,
@@ -874,7 +870,30 @@ def get_chat_message_page_ids(
     while next_id is not None and next_id in latest_child_by_id:
         branch.append(next_id)
         next_id = latest_child_by_id[next_id]
+    return CurrentBranch(branch, parent_by_id, children_by_parent)
 
+
+def get_chat_message_page_ids(
+    current_branch: CurrentBranch,
+    limit: int,
+    before_message_id: int | None = None,
+    waiting_reply_ids: Collection[int] = (),
+) -> tuple[set[int], bool]:
+    """One page of a session's current branch, for paged loading.
+
+    The page holds the last `limit` messages of the current branch, or of the
+    part of it before `before_message_id`. It also holds every child of those
+    messages, so a branch switcher and multi-model replies have their
+    siblings, including the siblings of the first message of the next, newer
+    page.
+
+    The latest page also reaches back to the question of each of
+    `waiting_reply_ids` that is on the branch, or a reply to it.
+
+    Returns the message ids and whether the branch has older messages. A
+    `before_message_id` that is not on the current branch gives an empty page.
+    """
+    branch = current_branch.message_ids
     if before_message_id is not None:
         # The branch changed since the client loaded this message.
         if before_message_id not in branch:
@@ -889,15 +908,117 @@ def get_chat_message_page_ids(
             + [
                 positions[message_id]
                 for reply_id in waiting_reply_ids
-                for message_id in (parent_by_id.get(reply_id), reply_id)
+                for message_id in (
+                    current_branch.parent_by_id.get(reply_id),
+                    reply_id,
+                )
                 if message_id in positions
             ]
         )
     page = branch[start:]
     page_ids = set(page)
     for message_id in page:
-        page_ids.update(children_by_parent.get(message_id, []))
+        page_ids.update(current_branch.children_by_parent.get(message_id, []))
     return page_ids, start > 0
+
+
+# Every PublishedFiles details object in a saved tool result, at any depth.
+_PUBLISHED_FILES_PATH = (
+    f'strict $.** ? (@.type == "{PublishedFiles.model_fields["type"].default}")'
+    ".files[*]"
+)
+
+
+def get_published_files_on_branch(
+    branch_message_ids: Sequence[int], db_session: Session
+) -> list[ChatPublishedFile]:
+    """The files that the model published in the answers of a branch: the
+    `CHAT_ARTIFACT` files of their `ChatMessage.files`, in the branch's order
+    and then each answer's order. The path and title come from the saved
+    `PublishedFiles` details of the answers' tool calls, also those of code
+    mode programs, which nest them in the call's result."""
+    file_entry = (
+        # Some rows hold a JSON null instead of a list.
+        func.jsonb_array_elements(
+            case(
+                (func.jsonb_typeof(ChatMessage.files) == "array", ChatMessage.files),
+                else_=cast(literal("[]"), postgresql.JSONB),
+            )
+        )
+        .table_valued(column("value", postgresql.JSONB), with_ordinality="position")
+        .render_derived(name="file_entry")
+        .lateral()
+    )
+    published_entry = (
+        func.jsonb_path_query(
+            type_coerce(ToolCall.result, postgresql.JSONB),
+            cast(literal(_PUBLISHED_FILES_PATH), postgresql.JSONPATH),
+            cast(literal("{}"), postgresql.JSONB),
+            # Skip results whose `files` is not a list.
+            true(),
+        )
+        .table_valued(column("value", postgresql.JSONB))
+        .render_derived(name="published_entry")
+        .lateral()
+    )
+    published_file_id = published_entry.c.value["file_id"].astext
+    publishes = (
+        select(
+            published_file_id.label("file_id"),
+            published_entry.c.value["path"].astext.label("path"),
+            published_entry.c.value["title"].astext.label("title"),
+        )
+        .select_from(ToolCall)
+        .join(published_entry, true())
+        .where(ToolCall.parent_chat_message_id.in_(branch_message_ids))
+        .distinct(published_file_id)
+        .subquery("publishes")
+    )
+    rows = db_session.execute(
+        select(
+            ChatMessage.id,
+            file_entry.c.position,
+            FileRecord.file_id,
+            FileRecord.display_name,
+            FileRecord.file_type,
+            FileRecord.file_size,
+            publishes.c.path,
+            publishes.c.title,
+        )
+        .select_from(ChatMessage)
+        .join(file_entry, true())
+        .join(FileRecord, FileRecord.file_id == file_entry.c.value["id"].astext)
+        .outerjoin(publishes, publishes.c.file_id == FileRecord.file_id)
+        .where(ChatMessage.id.in_(branch_message_ids))
+        .where(ChatMessage.message_type == MessageType.ASSISTANT)
+        .where(FileRecord.file_origin == FileOrigin.CHAT_ARTIFACT)
+    ).all()
+    positions = {
+        message_id: index for index, message_id in enumerate(branch_message_ids)
+    }
+    return [
+        ChatPublishedFile(
+            file_id=file_id,
+            name=display_name or file_id,
+            title=title,
+            # A file without its call's record is a file of its own.
+            path=path or file_id,
+            # Unknown (NULL) or missing (-1) sizes show as 0.
+            size=max(file_size or 0, 0),
+            mime_type=file_type,
+            message_id=message_id,
+        )
+        for (
+            message_id,
+            _,
+            file_id,
+            display_name,
+            file_type,
+            file_size,
+            path,
+            title,
+        ) in sorted(rows, key=lambda row: (positions[row[0]], row[1]))
+    ]
 
 
 def get_or_create_root_message(

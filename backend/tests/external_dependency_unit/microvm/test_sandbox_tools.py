@@ -2340,6 +2340,104 @@ def test_a_publish_that_fails_on_one_file_publishes_none(
 
 
 @pytest.mark.usefixtures("node", "initialize_file_store")
+def test_a_paged_chat_load_lists_every_file_published_on_the_branch(
+    db_session: Session, sandbox: FirecrackerHarnessSandbox, chat: SandboxChat
+) -> None:
+    """A first answer publishes a report and a chart. A later answer's code
+    mode program publishes the report's path again. A load of only the latest
+    message lists all three, oldest first, each with its path and title."""
+    ref = chat.ref(db_session)
+    sandbox.write_file(ref, "report.md", b"# Draft\n")
+    sandbox.write_file(ref, "chart.svg", b"<svg/>")
+    chat.send(
+        ChatLLM(
+            [
+                tool_step(
+                    PublishFilesTool.NAME,
+                    "publish",
+                    {
+                        "files": [
+                            {"path": "report.md", "title": "Report"},
+                            {"path": "chart.svg"},
+                        ]
+                    },
+                ),
+                Delta(content="Done."),
+            ]
+        )
+    )
+    sandbox.write_file(ref, "report.md", b"# Final report\n")
+    parts = chat.send(
+        ChatLLM(
+            [
+                code_step(
+                    "code",
+                    "print(await tools.publish_files(files=[{'path': 'report.md'}]))\n",
+                ),
+                Delta(content="Done."),
+            ]
+        ),
+        code_mode=True,
+    )
+    assert any(
+        isinstance(obj, packets.PublishFilesEnd) for obj in _sandbox_packets(parts)
+    )
+
+    db_session.expire_all()
+    first_answer, last_answer = db_session.scalars(
+        select(ChatMessage)
+        .where(
+            ChatMessage.chat_session_id == chat.chat_session_id,
+            ChatMessage.message_type == MessageType.ASSISTANT,
+        )
+        .order_by(ChatMessage.id)
+    ).all()
+    detail = get_chat_session(
+        session_id=chat.chat_session_id, limit=1, user=chat.user, db_session=db_session
+    )
+
+    assert first_answer.id not in {message.message_id for message in detail.messages}
+    workspace = session_workspace(chat.chat_session_id)
+    assert [
+        (file.name, file.title, file.path, file.size, file.mime_type, file.message_id)
+        for file in detail.published_files
+    ] == [
+        (
+            "report.md",
+            "Report",
+            f"{workspace}/report.md",
+            8,
+            "text/markdown",
+            first_answer.id,
+        ),
+        (
+            "chart.svg",
+            None,
+            f"{workspace}/chart.svg",
+            6,
+            "image/svg+xml",
+            first_answer.id,
+        ),
+        (
+            "report.md",
+            None,
+            f"{workspace}/report.md",
+            15,
+            "text/markdown",
+            last_answer.id,
+        ),
+    ]
+    assert [file.file_id for file in detail.published_files] == [
+        descriptor["id"]
+        for answer in (first_answer, last_answer)
+        for descriptor in answer.files or []
+    ]
+    delete_chat_session_by_id(
+        chat.chat_session_id, hard_delete=True, user=chat.user, db_session=db_session
+    )
+
+
+@pytest.mark.usefixtures("node", "initialize_file_store")
 def test_a_program_publishes_files_that_belong_to_the_message(
     db_session: Session, sandbox: FirecrackerHarnessSandbox, chat: SandboxChat
 ) -> None:
