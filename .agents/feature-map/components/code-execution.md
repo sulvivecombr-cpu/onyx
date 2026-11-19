@@ -342,8 +342,10 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         with omitted_bytes; output empty) marks it, and the
                                         ExecEnd output is the card text built from it. A
                                         failed write, or text that cannot be encoded (a lone
-                                        surrogate), keeps
-                                        the head and tail with a note.
+                                        surrogate), keeps the head and tail with a note; an
+                                        exec call within the size limit and the step budget
+                                        keeps its token-cut output instead, and the note
+                                        states the bytes that the buffer dropped.
                                         Calls inside a code mode program skip it; the cell's
                                         results spill, and so do the release hooks'
                                         amendments (Run._release_amendments, amended=True,

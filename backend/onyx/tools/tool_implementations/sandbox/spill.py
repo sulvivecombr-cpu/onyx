@@ -13,10 +13,11 @@ from onyx.tools.constants import (
     FILE_READER_TOOL_NAME,
     SKILLS_READ_TOOL_NAME,
 )
-from onyx.tools.models import CustomToolCallSummary, SpilledOutput
+from onyx.tools.models import CustomToolCallSummary
 from onyx.tools.tool_implementations.sandbox.models import (
     RetainedOutputResult,
     SandboxExecResult,
+    SpilledOutput,
 )
 from onyx.tools.tool_implementations.sandbox.sandbox_tools import ExecCommandTool
 from onyx.tools.tool_implementations.sandbox.turn import SandboxTurn
@@ -50,6 +51,23 @@ _KEEPS_RESULT = frozenset(
 _UNSAFE_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_.-]")
 
 
+def _plain(result: ToolResult) -> ToolResult:
+    """`result` as a plain ToolResult, so a tool's retained output
+    (RetainedOutputResult) goes no further than the spill."""
+    if type(result) is ToolResult:
+        return result
+    return ToolResult(
+        id=result.id,
+        metadata=result.metadata,
+        estimated_tokens=result.estimated_tokens,
+        cacheable=result.cacheable,
+        content=result.content,
+        details=result.details,
+        is_error=result.is_error,
+        terminate=result.terminate,
+    )
+
+
 def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolResult:
     """The result, or, when it is too large, a preview and the path of the
     file in the VM that holds its full text. The write wakes the VM if needed;
@@ -65,15 +83,13 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     # The floor applies to the content that the preview would replace: an
     # exec call's cut output can be shorter than a preview.
     if call.name in _KEEPS_RESULT or len(result.content) <= SPILL_MIN_CHARS:
-        return result
+        return _plain(result)
     step_chars = sum(len(recorded.content) for recorded in context.step_results)
+    within_budget = step_chars + len(result.content) <= STEP_MAX_CHARS
     lines = text.count("\n") + (not text.endswith("\n"))
-    if (
-        len(text) <= RESULT_MAX_CHARS
-        and lines <= RESULT_MAX_LINES
-        and step_chars + len(result.content) <= STEP_MAX_CHARS
-    ):
-        return result
+    if len(text) <= RESULT_MAX_CHARS and lines <= RESULT_MAX_LINES and within_budget:
+        return _plain(result)
+    omitted_bytes = retained.omitted_bytes if retained is not None else 0
 
     head = text[:PREVIEW_HEAD_CHARS]
     tail = text[-PREVIEW_TAIL_CHARS:]
@@ -92,12 +108,25 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
         turn.sandbox.write_onyx_file(turn.start_call(), path, data[:SPILL_MAX_BYTES])
     except Exception:
         logger.exception("tool_result_spill_failed call=%s path=%s", call.id, path)
+        # Cut output that is within the size limit, and that the step budget
+        # allows, stays as the tool cut it.
         content = (
-            head
-            + truncation_marker(len(text) - len(head) - len(tail))
-            + tail
-            + "\n[The result was too large, and the sandbox could not save the "
-            "full text, so the middle is left out.]"
+            result.content[len(retained.output_prefix) :]
+            if retained is not None
+            and within_budget
+            and len(result.content) <= RESULT_MAX_CHARS
+            else head + truncation_marker(len(text) - len(head) - len(tail)) + tail
+        )
+        content += (
+            "\n[The result was too large, and the sandbox could not save the "
+            "full text, so the middle is left out."
+            + (
+                f" The sandbox had already dropped {omitted_bytes:,} bytes from "
+                "the middle of the output."
+                if omitted_bytes
+                else ""
+            )
+            + "]"
         )
     else:
         cut = (
@@ -106,9 +135,9 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
             else ""
         )
         dropped = (
-            f"The sandbox dropped {retained.omitted_bytes:,} bytes from the "
-            "middle of the output; the file has the rest.\n"
-            if retained is not None and retained.omitted_bytes
+            f"The sandbox dropped {omitted_bytes:,} bytes from the middle of the "
+            "output; the file does not have them.\n"
+            if omitted_bytes
             else ""
         )
         content = (
@@ -123,9 +152,7 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
         spilled = SpilledOutput(
             head=head,
             tail=tail,
-            omitted_bytes=retained.omitted_bytes
-            if retained is not None and retained.omitted_bytes
-            else None,
+            omitted_bytes=omitted_bytes or None,
         )
     # The output in the details of an exec call, or of a custom or MCP tool,
     # becomes the preview, so the saved history does not hold the text that
@@ -156,4 +183,4 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
         )
     if retained is not None:
         content = retained.output_prefix + content
-    return result.model_copy(update={"content": content, "details": details})
+    return _plain(result.model_copy(update={"content": content, "details": details}))

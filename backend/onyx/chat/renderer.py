@@ -128,20 +128,6 @@ HIDDEN_TOOLS = frozenset(
 
 # The card's note between the head and the tail of a spilled result.
 SPILLED_OUTPUT_NOTE = "Large output: the full result was saved to the sandbox."
-
-
-def _spilled_card_text(spilled: SpilledOutput) -> str:
-    """What the user's card shows of a spilled result: the head, a plain
-    note, and the tail; never the model's instructions."""
-    dropped = (
-        f" The sandbox dropped {spilled.omitted_bytes:,} bytes from the middle "
-        "of the output."
-        if spilled.omitted_bytes
-        else ""
-    )
-    return f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}{dropped}]\n\n{spilled.tail}"
-
-
 # Tools whose code argument streams to the browser while the model writes it.
 CODE_ARGUMENT_TOOLS = frozenset({PythonTool.NAME, CODE_MODE_TOOL_NAME})
 # Tools whose calls observe a code mode cell; each call renders as one code mode card.
@@ -156,6 +142,18 @@ _OPTIONAL_STRING = TypeAdapter(str | None)
 _INT = TypeAdapter(int)
 _STRINGS = TypeAdapter(list[str])
 logger = setup_logger()
+
+
+def _spilled_card_text(spilled: SpilledOutput) -> str:
+    """What the user's card shows of a spilled result: the head, a plain
+    note, and the tail; never the model's instructions."""
+    note = (
+        f"Large output: saved to the sandbox; {spilled.omitted_bytes:,} bytes "
+        "from the middle were dropped."
+        if spilled.omitted_bytes
+        else SPILLED_OUTPUT_NOTE
+    )
+    return f"{spilled.head}\n\n[{note}]\n\n{spilled.tail}"
 
 
 class ResponseLayout:

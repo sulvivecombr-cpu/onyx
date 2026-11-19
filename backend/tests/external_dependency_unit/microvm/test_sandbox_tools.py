@@ -155,7 +155,6 @@ from onyx.tools.constants import (
 from onyx.tools.interface import Tool
 from onyx.tools.models import (
     CustomToolCallSummary,
-    SpilledOutput,
     ToolContext,
     ToolOptions,
 )
@@ -170,6 +169,7 @@ from onyx.tools.tool_implementations.sandbox.models import (
     PublishedFiles,
     PublishFileArgument,
     SandboxExecResult,
+    SpilledOutput,
 )
 from onyx.tools.tool_implementations.sandbox.sandbox_tools import (
     ApplyPatchTool,
@@ -2944,11 +2944,12 @@ def _preview(path: str, kept: str, note: str = "") -> str:
 def _card(kept: str, dropped: int = 0) -> str:
     """What the terminal card shows of spilled output that kept `kept`."""
     note = (
-        f" The sandbox dropped {dropped:,} bytes from the middle of the output."
+        f"Large output: saved to the sandbox; {dropped:,} bytes from the middle "
+        "were dropped."
         if dropped
-        else ""
+        else SPILLED_OUTPUT_NOTE
     )
-    return f"{kept[:2000]}\n\n[{SPILLED_OUTPUT_NOTE}{note}]\n\n{kept[-1000:]}"
+    return f"{kept[:2000]}\n\n[{note}]\n\n{kept[-1000:]}"
 
 
 def _exec_end(parts: Sequence[object]) -> packets.ExecEnd:
@@ -2995,7 +2996,7 @@ def test_large_command_output_spills_to_the_vm_and_the_history_keeps_the_preview
         path,
         kept,
         f"The sandbox dropped {dropped:,} bytes from the middle of the output; "
-        "the file has the rest.\n"
+        "the file does not have them.\n"
         if dropped
         else "",
     )
