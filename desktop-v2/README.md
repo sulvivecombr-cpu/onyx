@@ -23,7 +23,7 @@ Linux builds are a preview (see [Windows and Linux](#windows-and-linux)). It liv
   `tel:` links open in the system browser; other schemes are blocked. Downloads open the
   native save panel. `alert()`, `confirm()` and `prompt()` show native dialogs.
 - Tray icon, standard macOS menus (with Edit), and a Preferences window (`Cmd+,`) for the
-  server and sign-out.
+  server, the launcher shortcut, **Launch at login** and sign-out.
 - Native main window chrome: overlay title bar, the sidebar runs to the top with
   the traffic lights inside it, the collapse button sits on that row, and collapsing slides the
   sidebar fully away. In full screen the button moves to the left edge. The sidebar's top row
@@ -61,6 +61,132 @@ thinks while a launcher answer streams, is happy when it is done, and hops when 
 opens. Click it to open the launcher, drag it anywhere, right-click to hide it. Five more logo
 clicks send it away. Whether it is shown and where it sits are saved in `config.json`. The
 sprite sheets in `public/aonyx/` are played faster than the pack's timing.
+
+## Managed deployment (MDM and Group Policy)
+
+IT can push the app to every device with Kandji, Jamf, Intune or Group Policy, and set it up
+in advance. With a managed server, the app skips onboarding and opens at sign-in.
+
+The app reads the policy at launch and again each time Preferences opens
+(`src-tauri/src/policy.rs`). A managed value wins over the user's own `config.json` value.
+Preferences shows managed values read-only, with "Managed by your organization". The app logs
+and ignores a value that is not valid.
+
+| Key | Type | Effect |
+|---|---|---|
+| `ServerURL` | string | The Onyx server. Must be `https://` (`http://` only for this computer). If the user has not saved a server, onboarding is skipped. A server the user saves later is used instead, unless `LockServerURL` is set. |
+| `LockServerURL` | bool | Always use `ServerURL`, and hide **Change server**. Needs a valid `ServerURL`. |
+| `DisableAutoUpdate` | bool | The updater does not check for updates. **Check for Updates…** says that updates are managed. |
+| `LauncherShortcut` | string | The launcher shortcut, in the Preferences format, for example `CommandOrControl+Shift+Space`. |
+| `DisableLauncher` | bool | No launcher shortcut, and the launcher does not open. |
+| `LaunchAtLogin` | bool | Turns **Launch at login** on or off, and the user cannot change it. |
+
+A change to `ServerURL` or `LockServerURL` applies at the next launch. The other keys apply when
+Preferences opens.
+
+### macOS
+
+macOS reads forced managed preferences for the bundle ID `app.onyx.desktop.v2`. Values that a
+user writes with `defaults write` are not managed and are ignored. Upload this profile as a
+custom configuration profile (Kandji: Custom Profile; Jamf Pro: Configuration Profiles, Upload;
+Intune: macOS, Templates, Custom). Give each payload a new `PayloadUUID` (`uuidgen`).
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadType</key>
+      <string>com.apple.ManagedClient.preferences</string>
+      <key>PayloadIdentifier</key>
+      <string>com.example.onyx-desktop.preferences</string>
+      <key>PayloadUUID</key>
+      <string>0B0EFAE4-B391-4C0D-8953-D994C35D8BD8</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>PayloadDisplayName</key>
+      <string>Onyx Desktop settings</string>
+      <key>PayloadContent</key>
+      <dict>
+        <key>app.onyx.desktop.v2</key>
+        <dict>
+          <key>Forced</key>
+          <array>
+            <dict>
+              <key>mcx_preference_settings</key>
+              <dict>
+                <key>ServerURL</key>
+                <string>https://onyx.example.com</string>
+                <key>LockServerURL</key>
+                <true/>
+                <key>DisableAutoUpdate</key>
+                <false/>
+                <key>LauncherShortcut</key>
+                <string>CommandOrControl+Shift+Space</string>
+                <key>DisableLauncher</key>
+                <false/>
+                <key>LaunchAtLogin</key>
+                <true/>
+              </dict>
+            </dict>
+          </array>
+        </dict>
+      </dict>
+    </dict>
+  </array>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadIdentifier</key>
+  <string>com.example.onyx-desktop</string>
+  <key>PayloadUUID</key>
+  <string>B9F776F8-59CA-4093-9C03-95707C6E65EA</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+  <key>PayloadDisplayName</key>
+  <string>Onyx Desktop</string>
+  <key>PayloadScope</key>
+  <string>System</string>
+</dict>
+</plist>
+```
+
+To see what the app gets on a device, run `defaults read "/Library/Managed Preferences/app.onyx.desktop.v2"`.
+
+### Windows
+
+The app reads `HKLM\SOFTWARE\Policies\Onyx\Desktop`, then the same key under `HKCU`. A machine
+value wins over a user value. Use `REG_SZ` for strings and `REG_DWORD` (`0` or `1`) for booleans.
+Deploy the values with Group Policy Preferences (Registry), an Intune script, or this file:
+
+```reg
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Onyx\Desktop]
+"ServerURL"="https://onyx.example.com"
+"LockServerURL"=dword:00000001
+"DisableAutoUpdate"=dword:00000000
+"LauncherShortcut"="CommandOrControl+Shift+Space"
+"DisableLauncher"=dword:00000000
+"LaunchAtLogin"=dword:00000001
+```
+
+### Linux
+
+The app reads `/etc/onyx-desktop/policy.json`, one JSON object with the same keys:
+
+```json
+{
+  "ServerURL": "https://onyx.example.com",
+  "LockServerURL": true,
+  "DisableAutoUpdate": false,
+  "LauncherShortcut": "CommandOrControl+Shift+Space",
+  "DisableLauncher": false,
+  "LaunchAtLogin": true
+}
+```
 
 ## Keyboard shortcuts
 
@@ -177,6 +303,7 @@ and every 6 hours, downloads a newer version in the background, then changes **C
 Updates…** (app menu and tray) to **Restart to Update (vX)**. It does not restart on its own.
 Every download is verified against `plugins.updater.pubkey` in `tauri.conf.json` before it is
 installed; a build that was changed after signing, or signed with another key, is rejected.
+The managed `DisableAutoUpdate` key turns off all checks.
 
 - The feed (`plugins.updater.endpoints`) must be HTTPS. It points at a feed that does not exist
   yet, so checks fail quietly until the feed is set up.

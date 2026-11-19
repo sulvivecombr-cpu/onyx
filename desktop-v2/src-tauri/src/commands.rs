@@ -4,10 +4,12 @@
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 use crate::api::{normalize_server_url, AuthMethods, SearchHit};
 use crate::ask::{self, AskEvent};
 use crate::main_window;
+use crate::policy;
 use crate::shortcut;
 use crate::state::AppState;
 use crate::windows;
@@ -25,7 +27,17 @@ pub struct Prefs {
     server_url: Option<String>,
     hotkey: String,
     signed_in: bool,
+    launch_at_login: bool,
+    /// Which settings managed policy sets; Preferences shows them read-only.
+    server_managed: bool,
+    server_locked: bool,
+    hotkey_managed: bool,
+    launcher_disabled: bool,
+    launch_at_login_managed: bool,
+    auto_update_disabled: bool,
 }
+
+const MANAGED: &str = "This setting is managed by your organization.";
 
 #[tauri::command]
 pub async fn check_server(url: String, state: State<'_, AppState>) -> Result<ServerInfo, String> {
@@ -39,6 +51,9 @@ pub async fn check_server(url: String, state: State<'_, AppState>) -> Result<Ser
 
 #[tauri::command]
 pub fn save_server(url: String, app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.policy().lock_server_url {
+        return Err(MANAGED.into());
+    }
     let server = normalize_server_url(&url)?;
     state.config.update(|c| c.server_url = Some(server))?;
     windows::open_login(&app)?;
@@ -90,16 +105,26 @@ pub async fn login(
     Ok(())
 }
 
+/// Preferences calls this when it opens, so managed policy is read again then.
 #[tauri::command]
-pub fn get_prefs(state: State<'_, AppState>) -> Prefs {
-    let config = state.config.get();
-    let signed_in = config
-        .server_url
+pub fn get_prefs(app: AppHandle, state: State<'_, AppState>) -> Prefs {
+    policy::refresh(&app);
+    let policy = state.policy();
+    let server_url = state.server().ok();
+    let signed_in = server_url
         .as_deref()
         .is_some_and(|server| state.token(server).is_some());
+    let saved_hotkey = state.config.get().hotkey();
     Prefs {
-        hotkey: config.hotkey(),
-        server_url: config.server_url,
+        server_managed: server_url.is_some() && server_url == policy.server_url,
+        server_locked: policy.lock_server_url,
+        hotkey_managed: policy.hotkey_managed(),
+        launcher_disabled: policy.disable_launcher,
+        launch_at_login_managed: policy.launch_at_login.is_some(),
+        auto_update_disabled: policy.disable_auto_update,
+        hotkey: policy.launcher_shortcut.clone().unwrap_or(saved_hotkey),
+        launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        server_url,
         signed_in,
     }
 }
@@ -110,6 +135,9 @@ pub fn set_hotkey(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    if state.policy().hotkey_managed() {
+        return Err(MANAGED.into());
+    }
     let old = state.config.get().hotkey();
     shortcut::rebind(&app, &old, &hotkey)?;
     // A shortcut that cannot be saved is not kept: it would revert on restart.
@@ -118,6 +146,27 @@ pub fn set_hotkey(
         return Err(e);
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_launch_at_login(
+    enabled: bool,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    if state.policy().launch_at_login.is_some() {
+        return Err(MANAGED.into());
+    }
+    let autolaunch = app.autolaunch();
+    let result = if enabled {
+        autolaunch.enable()
+    } else {
+        autolaunch.disable()
+    };
+    result.map_err(|e| {
+        log::warn!("could not change launch at login: {e}");
+        "Could not change this setting. Try again.".to_string()
+    })
 }
 
 async fn end_session(app: &AppHandle) -> Result<(), String> {
@@ -150,6 +199,9 @@ pub async fn sign_out(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn change_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.policy().lock_server_url {
+        return Err(MANAGED.into());
+    }
     end_session(&app).await?;
     // The session has ended either way; if the server cannot be cleared, the
     // user still gets a window (sign-in for the same server) and the error.
