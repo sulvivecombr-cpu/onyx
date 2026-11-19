@@ -144,7 +144,11 @@ from onyx.server.query_and_chat.models import (
     SendMessageRequest,
 )
 from onyx.server.query_and_chat.streaming_models import StreamingError
-from onyx.tools.constants import INTERNAL_SEARCH_TOOL_NAME, SPAWN_AGENT_TOOL_NAME
+from onyx.tools.constants import (
+    INTERNAL_SEARCH_TOOL_NAME,
+    POSTGRES_TOOL_NAME,
+    SPAWN_AGENT_TOOL_NAME,
+)
 from onyx.tools.interface import Tool
 from onyx.tools.models import (
     CustomToolCallSummary,
@@ -2832,16 +2836,16 @@ def test_a_large_result_that_the_vm_cannot_take_keeps_its_head_and_tail(
 
 
 @pytest.mark.usefixtures("node")
-def test_a_large_internal_search_result_stays_whole(
+@pytest.mark.parametrize("name", [INTERNAL_SEARCH_TOOL_NAME, POSTGRES_TOOL_NAME])
+def test_a_large_citeable_tool_result_stays_whole(
     monkeypatch: pytest.MonkeyPatch,
     db_session: Session,
     node: RunningFakeAgent,
     chat: SandboxChat,
+    name: str,
 ) -> None:
-    _offer_mcp_tool(monkeypatch, INTERNAL_SEARCH_TOOL_NAME, _big)
-    llm = ChatLLM(
-        [tool_step(INTERNAL_SEARCH_TOOL_NAME, "found", {}), Delta(content="Done.")]
-    )
+    _offer_mcp_tool(monkeypatch, name, _big)
+    llm = ChatLLM([tool_step(name, "found", {}), Delta(content="Done.")])
     chat.send(llm)
 
     assert last_tool_text(llm, "found") == json.dumps({"tool_result": _big("found")})

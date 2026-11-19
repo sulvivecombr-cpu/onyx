@@ -900,13 +900,11 @@ class ToolRenderer:
                 else None
             )
             spilled = details.spilled
-            data: JsonValue = (
-                f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}]\n\n{spilled.tail}"
-                if spilled is not None
-                else None
-                if isinstance(details.tool_result, CustomToolUserFileSnapshot)
-                else details.tool_result
-            )
+            data: JsonValue = None
+            if spilled is not None:
+                data = f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}]\n\n{spilled.tail}"
+            elif not isinstance(details.tool_result, CustomToolUserFileSnapshot):
+                data = details.tool_result
             error = details.error
             objects.append(
                 packets.CustomToolDelta(

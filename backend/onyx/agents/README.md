@@ -238,14 +238,15 @@ Two optional tool callbacks cover interception and enrichment:
 | --- | --- |
 | `before_tool_call` | Return a `ToolResult` to skip execution, `PendingToolInput` to await input, or `None` to proceed. |
 | `after_tool_call` | Enrich an already accepted result. Failure preserves that result and fails the run. |
-| `prepare_tool_result` | Replace a completed result before the run records and streams it. Failure fails the run. |
+| `prepare_tool_result` | Replace a completed result before the run records and streams it. Failure fails the run; on an amendment, it keeps the recorded result and the run goes on. |
 
 Callbacks receive copies, except `prepare_tool_result`. Its `ToolResultContext`, like `ToolInvocation.recorded_results`, references the run's objects, since results can be large: the hook must not change them and returns a new result instead.
 `Run.record_tool_results` calls it for every result, one at a time in the order the calls complete, with the results of the step that the run recorded before.
 Its result is what the live `tool_update` event, the saved history and the model get.
-The amendments of the finish and suspend hooks go through it too, with `amended=True`.
+The amendments of the finish and suspend hooks go through it too, with `amended=True`. An amendment that is replaced again can hold an earlier replacement, such as a preview inside a preview; this is rare and accepted.
+A batch that completes after the run closed reaches neither the hook nor the record.
 It runs under the run's result lock: while it works, the run's other results, and Stop handling on the execution thread, wait for it.
-Chat uses it to save large results to a file in the sandbox VM (`tools/tool_implementations/sandbox/spill.py`). Its limits count characters, so they do not bound tokens for text such as CJK.
+Chat uses it to save large results to a file in the sandbox VM (`tools/tool_implementations/sandbox/spill.py`).
 Transformations of a tool's own meaning belong inside the tool, before it returns a valid result.
 A tool that calls other tools for the model, such as a code mode program, gets `ToolInvocation.nested_calls`, a `NestedCallGate`.
 `NestedCallGate.decide` applies `before_tool_call`, then the approval gate below, to each of those calls.

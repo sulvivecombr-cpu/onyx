@@ -813,6 +813,13 @@ class Run:
         with self._result_lock if prepare is not None else nullcontext():
             with self.execution_lock:
                 self.cancellation_signal.check()
+                # A batch that ends after the run closed records nothing, and
+                # the hook does no work for it.
+                if not self.is_accepting:
+                    logger.warning(
+                        "Tool batch completed after its run closed: %s", self.id
+                    )
+                    raise AgentCancelled()
                 record = self._state.steps[self._progress.step_index]
                 message_id = record.message.id
                 if message_id is None:
@@ -1651,6 +1658,7 @@ class Run:
         self.before_tool_call = None
         self.approval_required = frozenset()
         self.after_tool_call = None
+        self._prepare_tool_result = None
         self._on_finish = None
         self._on_suspend = None
         self._on_drained = None

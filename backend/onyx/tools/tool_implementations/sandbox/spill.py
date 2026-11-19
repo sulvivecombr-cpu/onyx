@@ -9,11 +9,9 @@ from onyx.agents.models import ToolResultContext
 from onyx.llm.models import ToolResult
 from onyx.server.features.build.sandbox.harness_base import ONYX_VM_FILES_ROOT
 from onyx.tools.constants import (
+    CITEABLE_TOOLS_NAMES,
     FILE_READER_TOOL_NAME,
-    INTERNAL_SEARCH_TOOL_NAME,
-    OPEN_URL_TOOL_NAME,
     SKILLS_READ_TOOL_NAME,
-    WEB_SEARCH_TOOL_NAME,
 )
 from onyx.tools.models import CustomToolCallSummary, SpilledOutput
 from onyx.tools.tool_implementations.sandbox.sandbox_tools import (
@@ -41,16 +39,14 @@ SPILL_MIN_CHARS = 2 * (PREVIEW_HEAD_CHARS + PREVIEW_TAIL_CHARS)
 SPILL_MAX_BYTES = 64 << 20
 # Exec output spills from the tools' own output buffer; read_file and
 # skills_read page through their text, so a spill would only be read back;
-# search results keep their own limits and citations.
+# the citeable tools keep their own limits and citations.
 _KEEPS_RESULT = frozenset(
     {
         ExecCommandTool.NAME,
         WriteStdinTool.NAME,
         FILE_READER_TOOL_NAME,
         SKILLS_READ_TOOL_NAME,
-        INTERNAL_SEARCH_TOOL_NAME,
-        WEB_SEARCH_TOOL_NAME,
-        OPEN_URL_TOOL_NAME,
+        *CITEABLE_TOOLS_NAMES,
     }
 )
 _UNSAFE_NAME_CHARACTERS = re.compile(r"[^A-Za-z0-9_.-]")
@@ -85,9 +81,11 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
         f"{context.message_id}_{call.id}" + ("_amended" if context.amended else ""),
     )
     path = f"{TOOL_RESULTS_DIR}/{name}.txt"
-    data = text.encode()
+    data = b""
     spilled: SpilledOutput | None = None
     try:
+        # Raises UnicodeEncodeError for text with a lone surrogate.
+        data = text.encode()
         turn.sandbox.write_onyx_file(turn.start_call(), path, data[:SPILL_MAX_BYTES])
     except Exception:
         logger.exception("tool_result_spill_failed call=%s path=%s", call.id, path)
@@ -119,8 +117,12 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     # and code mode details keep their own bounded output.
     details = result.details
     if isinstance(details, CustomToolCallSummary) and details.copies_output:
-        details = details.with_output(
-            None if spilled is not None else content, spilled=spilled
+        details = details.model_copy(
+            update={
+                "tool_result": None if spilled is not None else content,
+                "structured_result": None,
+                "spilled": spilled,
+            }
         )
     elif details is None and spilled is not None:
         # The card of a result without details shows its content; it shows

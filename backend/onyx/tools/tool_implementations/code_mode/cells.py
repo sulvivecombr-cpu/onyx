@@ -210,9 +210,7 @@ def durable_details(details: BaseModel | None) -> CodeModeCallDetails | None:
                 # Saved results exclude it; cleared so that the cell's call records
                 # do not hold it for the rest of the run. A copy, since `as_base`
                 # can return the live details.
-                durable = durable.with_output(
-                    durable.tool_result, spilled=durable.spilled
-                )
+                durable = durable.model_copy(update={"structured_result": None})
             # `kind` is a member of the CodeModeCallDetails union.
             return cast(CodeModeCallDetails, durable)
     return None
@@ -230,7 +228,7 @@ def _bounded_details(
         text = value if isinstance(value, str) else json.dumps(value, default=str)
         if len(text) <= max_chars:
             return details
-        return details.with_output(_bounded(text, max_chars))
+        return details.model_copy(update={"tool_result": _bounded(text, max_chars)})
     if isinstance(details, (LlmPythonExecutionResult, LlmBashExecutionResult)):
         return details.model_copy(
             update={

@@ -316,9 +316,9 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         configured tools hold a SandboxTool (its turn;
                                         restored agents and subagents get the same tools).
                                         Before the run records and streams a result of any
-                                        tool but exec_command, write_stdin, read_file,
-                                        skills_read and the search tools (internal_search,
-                                        web_search, open_url): over RESULT_MAX_CHARS or
+                                        tool but exec_command and write_stdin, read_file,
+                                        skills_read and the CITEABLE_TOOLS_NAMES (search,
+                                        open_url, postgres_query): over RESULT_MAX_CHARS or
                                         RESULT_MAX_LINES, or past the step's STEP_MAX_CHARS
                                         of recorded results, and longer than
                                         SPILL_MIN_CHARS, it is written (at most
@@ -332,7 +332,8 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         tail, no tool_result; a result without details gets
                                         one), and the card shows the preview with
                                         renderer.SPILLED_OUTPUT_NOTE, live and on replay. A
-                                        failed write keeps the head and tail with a note.
+                                        failed write, or text that cannot be encoded (a lone
+                                        surrogate), keeps the head and tail with a note.
                                         Calls inside a code mode program skip it; the cell's
                                         results spill, and so do the release hooks'
                                         amendments (Run._release_amendments, amended=True,

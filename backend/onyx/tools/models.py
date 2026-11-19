@@ -293,22 +293,6 @@ class CustomToolCallSummary(BaseModel):
         """Whether `tool_result` holds the tool's output, not file references."""
         return not isinstance(self.tool_result, CustomToolUserFileSnapshot)
 
-    def with_output(
-        self,
-        output: JsonValue | CustomToolUserFileSnapshot,
-        *,
-        spilled: SpilledOutput | None = None,
-    ) -> "CustomToolCallSummary":
-        """A copy with `output` in place of the tool's output, and without the
-        live-only structured content."""
-        return self.model_copy(
-            update={
-                "tool_result": output,
-                "structured_result": None,
-                "spilled": spilled,
-            }
-        )
-
     @model_validator(mode="after")
     def restore_file_references(self) -> Self:
         if self.response_type in {"image", "csv"}:
