@@ -20,7 +20,7 @@ from sqlalchemy import (
     or_,
     select,
     true,
-    type_coerce,
+    union_all,
     update,
 )
 from sqlalchemy.dialects import postgresql
@@ -48,7 +48,13 @@ from onyx.chat.models import (
 )
 from onyx.chat.response import message_thinking
 from onyx.configs.chat_configs import HARD_DELETE_CHATS
-from onyx.configs.constants import ANONYMOUS_USER_UUID, FileOrigin, MessageType
+from onyx.configs.constants import (
+    ANONYMOUS_USER_UUID,
+    PUBLISHED_FILE_PATH_METADATA_KEY,
+    PUBLISHED_FILE_TITLE_METADATA_KEY,
+    FileOrigin,
+    MessageType,
+)
 from onyx.context.search.models import InferenceSection, SavedSearchDoc
 from onyx.context.search.models import SearchDoc as ServerSearchDoc
 from onyx.db.document_set import require_document_set_access
@@ -75,7 +81,10 @@ from onyx.file_store.constants import (
     AGENT_CHECKPOINT_FILE_PREFIX,
     CHAT_ARTIFACT_FILE_PREFIX,
 )
-from onyx.file_store.file_store import get_default_file_store
+from onyx.file_store.file_store import (
+    FILE_SIZE_MISSING_SENTINEL,
+    get_default_file_store,
+)
 from onyx.file_store.models import FileDescriptor
 from onyx.llm.models import GenerationRequestParams
 from onyx.llm.override_models import LLMOverride, PromptOverride
@@ -86,7 +95,6 @@ from onyx.server.query_and_chat.models import (
 )
 from onyx.server.query_and_chat.streaming_models import StreamingError
 from onyx.tools.models import PluginEntry, ToolOptions
-from onyx.tools.tool_implementations.sandbox.models import PublishedFiles
 from onyx.utils.logger import setup_logger
 from onyx.utils.postgres_sanitization import sanitize_string
 
@@ -922,26 +930,51 @@ def get_chat_message_page_ids(
     return page_ids, start > 0
 
 
-# Every PublishedFiles details object in a saved tool result, at any depth.
-_PUBLISHED_FILES_PATH = (
-    f'strict $.** ? (@.type == "{PublishedFiles.model_fields["type"].default}")'
-    ".files[*]"
-)
-
-
 def get_published_files_on_branch(
     branch_message_ids: Sequence[int], db_session: Session
 ) -> list[ChatPublishedFile]:
-    """The files that the model published in the answers of a branch: the
-    `CHAT_ARTIFACT` files of their `ChatMessage.files`, in the branch's order
-    and then each answer's order. The path and title come from the saved
-    `PublishedFiles` details of the answers' tool calls, also those of code
-    mode programs, which nest them in the call's result."""
+    """The files that the model published on a branch, oldest first: the
+    `CHAT_ARTIFACT` files in the `ChatMessage.files` of the branch's answers
+    and of the answers of the sessions that they spawned, recursively. The
+    path and title are those that `publish_files` stamped in the file record.
+    Files without a stamped path and files whose object is missing are left
+    out."""
+    # One array parameter keeps the query the same size however long the branch is.
+    branch = bindparam(
+        "branch", list(branch_message_ids), type_=postgresql.ARRAY(Integer)
+    )
+    spawned = (
+        select(
+            ChatSession.id,
+            ChatSession.spawned_by_message_id.label("anchor_id"),
+        )
+        .where(ChatSession.spawned_by_message_id == any_(branch))
+        .cte("spawned_sessions", recursive=True)
+    )
+    # UNION stops traversal if corrupt ancestry repeats a row.
+    spawned = spawned.union(
+        select(ChatSession.id, spawned.c.anchor_id)
+        .join(ChatMessage, ChatMessage.id == ChatSession.spawned_by_message_id)
+        .join(spawned, ChatMessage.chat_session_id == spawned.c.id)
+    )
+    answers = union_all(
+        select(
+            ChatMessage.id.label("message_id"),
+            ChatMessage.id.label("anchor_id"),
+            ChatMessage.files,
+        ).where(
+            ChatMessage.id == any_(branch),
+            ChatMessage.message_type == MessageType.ASSISTANT,
+        ),
+        select(ChatMessage.id, spawned.c.anchor_id, ChatMessage.files)
+        .join(spawned, ChatMessage.chat_session_id == spawned.c.id)
+        .where(ChatMessage.message_type == MessageType.ASSISTANT),
+    ).subquery("answers")
     file_entry = (
         # Some rows hold a JSON null instead of a list.
         func.jsonb_array_elements(
             case(
-                (func.jsonb_typeof(ChatMessage.files) == "array", ChatMessage.files),
+                (func.jsonb_typeof(answers.c.files) == "array", answers.c.files),
                 else_=cast(literal("[]"), postgresql.JSONB),
             )
         )
@@ -949,75 +982,51 @@ def get_published_files_on_branch(
         .render_derived(name="file_entry")
         .lateral()
     )
-    published_entry = (
-        func.jsonb_path_query(
-            type_coerce(ToolCall.result, postgresql.JSONB),
-            cast(literal(_PUBLISHED_FILES_PATH), postgresql.JSONPATH),
-            cast(literal("{}"), postgresql.JSONB),
-            # Skip results whose `files` is not a list.
-            true(),
-        )
-        .table_valued(column("value", postgresql.JSONB))
-        .render_derived(name="published_entry")
-        .lateral()
-    )
-    published_file_id = published_entry.c.value["file_id"].astext
-    publishes = (
-        select(
-            published_file_id.label("file_id"),
-            published_entry.c.value["path"].astext.label("path"),
-            published_entry.c.value["title"].astext.label("title"),
-        )
-        .select_from(ToolCall)
-        .join(published_entry, true())
-        .where(ToolCall.parent_chat_message_id.in_(branch_message_ids))
-        .distinct(published_file_id)
-        .subquery("publishes")
-    )
+    path = FileRecord.file_metadata[PUBLISHED_FILE_PATH_METADATA_KEY].astext
     rows = db_session.execute(
         select(
-            ChatMessage.id,
-            file_entry.c.position,
+            answers.c.anchor_id,
             FileRecord.file_id,
             FileRecord.display_name,
             FileRecord.file_type,
             FileRecord.file_size,
-            publishes.c.path,
-            publishes.c.title,
+            path,
+            FileRecord.file_metadata[PUBLISHED_FILE_TITLE_METADATA_KEY].astext,
         )
-        .select_from(ChatMessage)
+        .select_from(answers)
         .join(file_entry, true())
         .join(FileRecord, FileRecord.file_id == file_entry.c.value["id"].astext)
-        .outerjoin(publishes, publishes.c.file_id == FileRecord.file_id)
-        .where(ChatMessage.id.in_(branch_message_ids))
-        .where(ChatMessage.message_type == MessageType.ASSISTANT)
-        .where(FileRecord.file_origin == FileOrigin.CHAT_ARTIFACT)
+        .where(
+            FileRecord.file_origin == FileOrigin.CHAT_ARTIFACT,
+            path.is_not(None),
+            FileRecord.file_size.is_distinct_from(FILE_SIZE_MISSING_SENTINEL),
+        )
+        .order_by(
+            func.array_position(branch, answers.c.anchor_id),
+            answers.c.message_id,
+            file_entry.c.position,
+        )
     ).all()
-    positions = {
-        message_id: index for index, message_id in enumerate(branch_message_ids)
-    }
     return [
         ChatPublishedFile(
             file_id=file_id,
             name=display_name or file_id,
             title=title,
-            # A file without its call's record is a file of its own.
-            path=path or file_id,
-            # Unknown (NULL) or missing (-1) sizes show as 0.
-            size=max(file_size or 0, 0),
+            path=path,
+            # Rows written before sizes were recorded show as 0.
+            size=file_size or 0,
             mime_type=file_type,
-            message_id=message_id,
+            message_id=anchor_id,
         )
         for (
-            message_id,
-            _,
+            anchor_id,
             file_id,
             display_name,
             file_type,
             file_size,
             path,
             title,
-        ) in sorted(rows, key=lambda row: (positions[row[0]], row[1]))
+        ) in rows
     ]
 
 

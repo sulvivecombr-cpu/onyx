@@ -302,7 +302,8 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         directory; a regular file of at most
                                         PUBLISH_FILES_MAX_BYTES, 100 MiB), then
                                         file_store/utils.save_chat_output_file with
-                                        FileOrigin.CHAT_ARTIFACT and the SandboxTurn's chat
+                                        FileOrigin.CHAT_ARTIFACT, the VM path and title
+                                        (stamped in file_metadata) and the SandboxTurn's chat
                                         session (the root chat's: subagents share the turn;
                                         file ID chat-artifact-<session>-<hex>).
                                         A failure, or a Stop during or after the copies,

@@ -501,7 +501,8 @@ class ChatSessionProcessingStatus(BaseModel):
 class ChatPublishedFile(PublishedFile):
     """A file that the model published on the current branch."""
 
-    # The answer that published the file.
+    # The branch's answer that published the file, or that spawned the
+    # session (a subagent's) that published it.
     message_id: int
 
 
@@ -530,7 +531,8 @@ class ChatSessionDetailResponse(BaseModel):
     # Set on a paged load when the current branch has messages before the page.
     has_older_messages: bool = False
     # Every file published on the current branch, also outside a paged load's
-    # page, oldest first.
+    # page and by the sessions that its answers spawned, oldest first. Set on
+    # a latest-page load and on a shared chat's load.
     published_files: list[ChatPublishedFile] = Field(default_factory=list)
     # The owner's saved tool options; NULL means the agent's tools.
     tool_options: ToolOptions | None = None

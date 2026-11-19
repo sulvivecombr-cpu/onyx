@@ -703,6 +703,8 @@ class PublishFilesTool(_FileTool):
                                 file_type=mime_type,
                                 file_origin=FileOrigin.CHAT_ARTIFACT,
                                 chat_session_id=ref.session_id,
+                                published_path=path,
+                                published_title=requested.title,
                             ),
                             name=name,
                             title=requested.title,

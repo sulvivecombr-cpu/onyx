@@ -43,6 +43,8 @@ from onyx.chat.stop_signal_checker import request_stop
 from onyx.configs.constants import (
     CHAT_SESSION_ID_FILE_METADATA_KEY,
     DEFAULT_PERSONA_ID,
+    PUBLISHED_FILE_PATH_METADATA_KEY,
+    PUBLISHED_FILE_TITLE_METADATA_KEY,
     FileOrigin,
     MessageType,
 )
@@ -2241,8 +2243,15 @@ def test_published_files_stream_replay_belong_to_the_message_and_go_with_the_cha
         record = store.read_file_record(file.file_id)
         assert record.file_origin == FileOrigin.CHAT_ARTIFACT
         assert record.display_name == file.name
+        # The chat's file list reads the path and title from the record.
         assert record.file_metadata == {
-            CHAT_SESSION_ID_FILE_METADATA_KEY: str(chat.chat_session_id)
+            CHAT_SESSION_ID_FILE_METADATA_KEY: str(chat.chat_session_id),
+            PUBLISHED_FILE_PATH_METADATA_KEY: file.path,
+            **(
+                {PUBLISHED_FILE_TITLE_METADATA_KEY: file.title}
+                if file.title is not None
+                else {}
+            ),
         }
         assert store.read_file(file.file_id).read() == data
     assert _answer_file_ids(db_session, chat.chat_session_id) == [

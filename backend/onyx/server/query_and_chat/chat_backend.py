@@ -553,10 +553,19 @@ def get_chat_session(
         )
     version = approvals_version(db_session, session_id)
 
-    current_branch = get_current_branch(session_id, db_session)
+    # The client keeps the branch's file list from a latest-page load, and the
+    # shared view from its full load; an older page does not need it.
+    lists_published_files = before_message_id is None and (
+        limit is not None or is_shared
+    )
+    current_branch = (
+        get_current_branch(session_id, db_session)
+        if limit is not None or lists_published_files
+        else None
+    )
     page_message_ids: set[int] | None = None
     has_older_messages = False
-    if limit is not None:
+    if limit is not None and current_branch is not None:
         # The latest page reaches back to every waiting card's reply, so a
         # client that loads only that page shows every waiting card.
         page_message_ids, has_older_messages = get_chat_message_page_ids(
@@ -648,7 +657,9 @@ def get_chat_session(
         has_older_messages=has_older_messages,
         published_files=get_published_files_on_branch(
             current_branch.message_ids, db_session
-        ),
+        )
+        if lists_published_files and current_branch is not None
+        else [],
         # Only the owner's composer reads the options; a shared view shows none.
         tool_options=chat_session.tool_options
         if user_id is not None and chat_session.user_id == user_id
