@@ -320,7 +320,8 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         CITEABLE_TOOLS_NAMES (search, open_url,
                                         postgres_query): over RESULT_MAX_CHARS or
                                         RESULT_MAX_LINES, or past the step's STEP_MAX_CHARS
-                                        of recorded results, and longer than
+                                        of recorded results, and with content (for exec,
+                                        the token-cut content) longer than
                                         SPILL_MIN_CHARS, it is written (at most
                                         SPILL_MAX_BYTES) to /tmp/onyx/tool-results/
                                         <step message ID>_<call ID>.txt with

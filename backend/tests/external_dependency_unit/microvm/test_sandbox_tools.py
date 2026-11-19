@@ -3022,6 +3022,31 @@ def test_large_command_output_spills_to_the_vm_and_the_history_keeps_the_preview
 
 
 @pytest.mark.usefixtures("node")
+def test_large_output_cut_shorter_than_a_preview_does_not_spill(
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    llm = ChatLLM(
+        [
+            tool_step(
+                ExecCommandTool.NAME,
+                "seq",
+                {"cmd": "seq 20000", "max_output_tokens": 20},
+            ),
+            Delta(content="Done."),
+        ]
+    )
+    chat.send(llm)
+
+    assert _spills(node, chat.ref(db_session)) == {}
+    shown = last_tool_text(llm, "seq")
+    assert "<persisted-output" not in shown
+    assert "tokens omitted" in shown
+    assert len(shown) < 1_000
+
+
+@pytest.mark.usefixtures("node")
 def test_large_output_of_a_running_command_spills_from_write_stdin(
     db_session: Session,
     node: RunningFakeAgent,

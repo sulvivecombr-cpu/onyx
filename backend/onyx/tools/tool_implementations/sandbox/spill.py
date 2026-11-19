@@ -62,7 +62,9 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     retained = result if isinstance(result, RetainedOutputResult) else None
     text = result.content if retained is None else retained.retained_output
     call = context.calls[0]
-    if call.name in _KEEPS_RESULT or len(text) <= SPILL_MIN_CHARS:
+    # The floor applies to the content that the preview would replace: an
+    # exec call's cut output can be shorter than a preview.
+    if call.name in _KEEPS_RESULT or len(result.content) <= SPILL_MIN_CHARS:
         return result
     step_chars = sum(len(recorded.content) for recorded in context.step_results)
     lines = text.count("\n") + (not text.endswith("\n"))
