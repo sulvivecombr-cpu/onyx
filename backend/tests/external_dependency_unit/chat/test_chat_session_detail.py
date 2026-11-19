@@ -19,7 +19,14 @@ from onyx.configs.constants import (
 )
 from onyx.db.chat import create_new_chat_message, get_or_create_root_message
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
-from onyx.db.models import ChatMessage, ChatSession, FileRecord, User
+from onyx.db.models import (
+    ChatMessage,
+    ChatSession,
+    ChatSessionSharedStatus,
+    FileRecord,
+    ToolCall,
+    User,
+)
 from onyx.file_store.file_store import (
     FILE_SIZE_MISSING_SENTINEL,
     get_default_file_store,
@@ -135,6 +142,25 @@ def _add(
     )
 
 
+def _run(db_session: Session, invoker: ChatMessage, after: ChatMessage) -> ChatMessage:
+    """The question of a subagent run that a tool call of `invoker` starts:
+    the first run of a new subagent, or a later run after `after`."""
+    call = ToolCall(
+        chat_session_id=invoker.chat_session_id,
+        parent_chat_message_id=invoker.id,
+        turn_number=0,
+        tool_call_id=f"call-{uuid4().hex}",
+        tool_call_arguments={},
+        tool_call_tokens=0,
+    )
+    db_session.add(call)
+    db_session.flush()
+    question = _add(db_session, after, MessageType.USER)
+    question.invoking_tool_call_id = call.id
+    db_session.commit()
+    return question
+
+
 def _publish(chat: ChatSession, path: str, title: str | None = None) -> FileDescriptor:
     name = path.rsplit("/", 1)[-1]
     file_id = save_chat_output_file(
@@ -168,7 +194,7 @@ def test_the_latest_page_lists_the_branch_files_with_their_stamped_path_and_titl
         file_origin=FileOrigin.CHAT_IMAGE_GEN,
         chat_session_id=chat.id,
     )
-    # Published before files recorded their path.
+    # A published file without a path.
     unstamped_id = get_default_file_store().save_file(
         content=BytesIO(b"old"),
         display_name="old.md",
@@ -206,21 +232,17 @@ def test_the_latest_page_lists_the_branch_files_with_their_stamped_path_and_titl
     child = _new_chat(db_session, owner, spawned_by=last_answer)
     child_answer = _add(
         db_session,
-        _add(
-            db_session,
-            get_or_create_root_message(child.id, db_session),
-            MessageType.USER,
-        ),
+        _run(db_session, last_answer, get_or_create_root_message(child.id, db_session)),
         MessageType.ASSISTANT,
         [_publish(child, "/w/report.md", "Report from a subagent")],
     )
     grandchild = _new_chat(db_session, owner, spawned_by=child_answer)
     _add(
         db_session,
-        _add(
+        _run(
             db_session,
+            child_answer,
             get_or_create_root_message(grandchild.id, db_session),
-            MessageType.USER,
         ),
         MessageType.ASSISTANT,
         [_publish(grandchild, "/w/chart.md")],
@@ -285,9 +307,70 @@ def test_only_a_latest_page_or_shared_load_lists_the_files(
     assert older_page.published_files == []
     unpaged = chat_backend.get_chat_session(chat.id, user=owner, db_session=db_session)
     assert unpaged.published_files == []
+    chat.shared_status = ChatSessionSharedStatus.PUBLIC
+    db_session.commit()
+    shared = chat_backend.get_chat_session(
+        chat.id, is_shared=True, user=owner, db_session=db_session
+    )
+    assert [file.path for file in shared.published_files] == ["/w/a.md"]
     assert [
         file.path
         for file in chat_backend.get_chat_session(
             chat.id, limit=1, user=owner, db_session=db_session
         ).published_files
     ] == ["/w/a.md"]
+
+
+@pytest.mark.usefixtures("initialize_file_store")
+def test_a_subagent_run_counts_on_the_branch_of_the_turn_that_started_it(
+    db_session: Session, owner: User
+) -> None:
+    """A1 spawns a subagent, A2 publishes the report, and A3 sends the
+    subagent a follow-up whose run publishes the report's path again. That run
+    belongs to A3: it sorts after A2, and it leaves the list when the user
+    regenerates A3."""
+    chat = _new_chat(db_session, owner)
+
+    def turn(
+        after: ChatMessage, files: list[FileDescriptor] | None = None
+    ) -> tuple[ChatMessage, ChatMessage]:
+        question = _add(db_session, after, MessageType.USER)
+        return question, _add(db_session, question, MessageType.ASSISTANT, files)
+
+    _, first = turn(get_or_create_root_message(chat.id, db_session))
+    agent = _new_chat(db_session, owner, spawned_by=first)
+    first_run = _add(
+        db_session,
+        _run(db_session, first, get_or_create_root_message(agent.id, db_session)),
+        MessageType.ASSISTANT,
+        [_publish(agent, "/w/notes.md")],
+    )
+    _, second = turn(first, [_publish(chat, "/w/report.md", "Draft")])
+    third_question, third = turn(second)
+    _add(
+        db_session,
+        _run(db_session, third, first_run),
+        MessageType.ASSISTANT,
+        [_publish(agent, "/w/report.md", "Final")],
+    )
+
+    def listed() -> list[tuple[str, str | None, int]]:
+        detail = chat_backend.get_chat_session(
+            chat.id, limit=2, user=owner, db_session=db_session
+        )
+        return [
+            (file.path, file.title, file.message_id) for file in detail.published_files
+        ]
+
+    assert listed() == [
+        ("/w/notes.md", None, first.id),
+        ("/w/report.md", "Draft", second.id),
+        ("/w/report.md", "Final", third.id),
+    ]
+
+    # The user regenerates A3: the follow-up run is off the branch.
+    _add(db_session, third_question, MessageType.ASSISTANT)
+    assert listed() == [
+        ("/w/notes.md", None, first.id),
+        ("/w/report.md", "Draft", second.id),
+    ]

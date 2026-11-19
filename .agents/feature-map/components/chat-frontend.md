@@ -190,7 +190,8 @@
   type and size. A click opens the file preview; HTML shows as source, never
   as a rendered page. Each card shows only its file; a later publish of the
   same path adds a card of its own. Cards that show one name also show their
-  path, relative to the chat's working directory. The timeline step lists the
+  `display_path`, which the backend sends: relative to the chat's working
+  directory. The timeline step lists the
   files that the call asked for and how it ended. Shared chats show the same
   cards.
 - **A chat with published files gets a Files button** in the chat header
@@ -200,7 +201,8 @@
   that are not loaded and their subagents: one entry per VM path, the newest
   publish of it, newest first, with its title or else its name. Each previews
   and downloads like a card. When the branch has no files, the panel closes
-  until the user opens it again. A closed panel (Files or Sources) cannot be
+  until the user opens it again; after a branch switch it waits for the new
+  branch's latest page (`latestPagePending`) before it decides. A closed panel (Files or Sources) cannot be
   focused. Escape closes only the top layer: an open preview first, then the
   panel, and focus returns to the panel's opener. On a
   narrow screen the panel opens as a modal.

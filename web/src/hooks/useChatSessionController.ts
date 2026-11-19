@@ -490,6 +490,15 @@ export default function useChatSessionController({
           // Once the server has the new branch, load its last page.
           const branch = getLatestMessageChain(newMessageTree);
           const nextId = branch[branch.length - 1]?.latestChildNodeId;
+          const reloadsPage = nextId != null && !newMessageTree.has(nextId);
+          const setPagePending = (latestPagePending: boolean) => {
+            if (currentSessionId && reloadsPage) {
+              useChatSessionStore
+                .getState()
+                .updateSessionData(currentSessionId, { latestPagePending });
+            }
+          };
+          setPagePending(true);
           void saved
             .then(async (response) => {
               if (!response.ok) {
@@ -500,14 +509,15 @@ export default function useChatSessionController({
                 return;
               }
               if (!currentSessionId) return;
-              if (nextId != null && !newMessageTree.has(nextId)) {
+              if (reloadsPage) {
                 await reloadLatestChatPage(currentSessionId);
               }
               await mutateCache(SWR_KEYS.chatSessionStatus(currentSessionId));
             })
             .catch((error: unknown) => {
               console.error("Could not refresh the selected branch", error);
-            });
+            })
+            .finally(() => setPagePending(false));
         } else {
           console.error("Message has no messageId", nodeId);
         }

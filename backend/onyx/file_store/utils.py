@@ -263,6 +263,8 @@ def save_chat_output_file(
         raise ValueError(f"{file_origin} is not a chat output origin")
     if (file_origin == FileOrigin.CHAT_ARTIFACT) != (published_path is not None):
         raise ValueError("A published path is given for published files only")
+    if published_title is not None and published_path is None:
+        raise ValueError("A published title needs a published path")
     file_metadata = {CHAT_SESSION_ID_FILE_METADATA_KEY: str(chat_session_id)}
     if published_path is not None:
         file_metadata[PUBLISHED_FILE_PATH_METADATA_KEY] = published_path

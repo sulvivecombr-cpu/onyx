@@ -36,14 +36,12 @@ from typing import IO
 from uuid import UUID
 
 from onyx.server.features.build.sandbox.models import (
+    SESSION_WORKSPACE_ROOT,
     ExecCommandResult,
     ExecEvent,
     HarnessSandboxRef,
     SandboxPathInfo,
 )
-
-# Parent of each chat session's working directory in the sandbox.
-SESSION_WORKSPACE_ROOT = "/home/onyx/workspaces"
 
 # Parent of the files that Onyx writes outside every session directory (for
 # example large tool results). No session save keeps them; they go when the

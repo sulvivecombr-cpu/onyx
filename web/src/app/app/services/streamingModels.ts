@@ -525,6 +525,9 @@ export interface PublishedFile {
   // Absolute and normalized in the sandbox; the file's identity. A later
   // publish of a path is the newer copy of that file.
   path: string;
+  // The path to show: relative to the chat's working directory, or the whole
+  // path outside it
+  display_path: string;
   size: number;
   mime_type: string;
 }

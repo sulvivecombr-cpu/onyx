@@ -290,6 +290,7 @@ describe("useCurrentPublishedFiles", () => {
           name: "report.md",
           title: null,
           path: "/w/report.md",
+          display_path: "/w/report.md",
           size: 10,
           mime_type: "text/markdown",
         },

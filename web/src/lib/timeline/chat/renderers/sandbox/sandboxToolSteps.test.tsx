@@ -665,6 +665,7 @@ test("published files show in the timeline and as download cards after the answe
     name: "report.csv",
     title,
     path: "/home/onyx/workspaces/abc/out/report.csv",
+    display_path: "out/report.csv",
     size: 2048,
     mime_type: "text/csv",
   });

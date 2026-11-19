@@ -11,7 +11,6 @@ import { DownloadButton } from "@/sections/modals/PreviewModal/variants/shared";
 import { useFormatBytes } from "@/hooks/useFormatBytes";
 import { getFileIcon } from "@/lib/utils";
 import type { MinimalOnyxDocument } from "@/lib/search/types";
-import { workspacePath } from "@/lib/chat/publishedFiles";
 
 interface PublishedFileCardsProps {
   files: PublishedFile[];
@@ -71,7 +70,7 @@ export function PublishedFileCards({ files }: PublishedFileCardsProps) {
                 title={file.title ?? file.name}
                 description={[
                   sharedNames.has(file.title ?? file.name)
-                    ? workspacePath(file.path)
+                    ? file.display_path
                     : "",
                   fileTypeLabel(file.name),
                   formatBytes(file.size),

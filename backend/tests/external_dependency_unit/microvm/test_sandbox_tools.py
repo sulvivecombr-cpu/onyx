@@ -2388,9 +2388,13 @@ def test_a_paged_chat_load_lists_every_file_published_on_the_branch(
         ),
         code_mode=True,
     )
-    assert any(
-        isinstance(obj, packets.PublishFilesEnd) for obj in _sandbox_packets(parts)
-    )
+    [live_end] = [
+        obj
+        for obj in _sandbox_packets(parts)
+        if isinstance(obj, packets.PublishFilesEnd)
+    ]
+    # The path to show is relative to the chat's working directory.
+    assert [file.display_path for file in live_end.files] == ["report.md"]
 
     db_session.expire_all()
     first_answer, last_answer = db_session.scalars(
@@ -2435,6 +2439,11 @@ def test_a_paged_chat_load_lists_every_file_published_on_the_branch(
             "text/markdown",
             last_answer.id,
         ),
+    ]
+    assert [file.display_path for file in detail.published_files] == [
+        "report.md",
+        "chart.svg",
+        "report.md",
     ]
     assert [file.file_id for file in detail.published_files] == [
         descriptor["id"]

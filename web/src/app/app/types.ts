@@ -253,7 +253,8 @@ export interface BackendChatSession {
 
 /** A file that the model published on the current branch. */
 export interface ChatPublishedFile extends PublishedFile {
-  // The answer that published it
+  // The branch answer the file is tied to: the answer that published it, or
+  // for a subagent's file, the turn root of the run that published it
   message_id: number;
 }
 

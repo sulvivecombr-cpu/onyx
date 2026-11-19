@@ -19,6 +19,7 @@ function published(
     name: path.split("/").pop() ?? path,
     title,
     path,
+    display_path: path,
     size: 10,
     mime_type: "text/markdown",
   };

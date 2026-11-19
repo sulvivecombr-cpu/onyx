@@ -43,6 +43,7 @@ test("a card shows the title, type and size, and downloads the file", () => {
           name: "report.csv",
           title: "Q3 report",
           path: "/home/onyx/report.csv",
+          display_path: "/home/onyx/report.csv",
           size: 2048,
           mime_type: "text/csv",
         },
@@ -51,6 +52,7 @@ test("a card shows the title, type and size, and downloads the file", () => {
           name: "report.csv",
           title: null,
           path: "/home/onyx/report.csv",
+          display_path: "/home/onyx/report.csv",
           size: 512,
           mime_type: "text/csv",
         },
@@ -72,25 +74,33 @@ test("a card shows the title, type and size, and downloads the file", () => {
 });
 
 test("files that show one name also show their path in the chat's folder", () => {
-  const workspace =
-    "/home/onyx/workspaces/0e3b8a52-4b1f-4c5e-9d0a-1a2b3c4d5e6f";
-  const csv = (fileId: string, path: string, title: string | null = null) => ({
+  // The backend sends the path to show: relative to the chat's working
+  // directory, or the whole path outside it. The card shows it as sent and
+  // knows nothing of the VM's layout.
+  const csv = (
+    fileId: string,
+    displayPath: string,
+    title: string | null = null
+  ) => ({
     file_id: fileId,
-    name: path.split("/").pop() ?? path,
+    name: displayPath.split("/").pop() ?? displayPath,
     title,
-    path,
+    path: displayPath.startsWith("/")
+      ? displayPath
+      : `/vm/sessions/chat/${displayPath}`,
+    display_path: displayPath,
     size: 512,
     mime_type: "text/csv",
   });
   render(
     <PublishedFileCards
       files={[
-        csv("drafts", `${workspace}/drafts/summary.csv`),
-        csv("final", `${workspace}/final/summary.csv`),
+        csv("drafts", "drafts/summary.csv"),
+        csv("final", "final/summary.csv"),
         csv("outside", "/tmp/onyx/summary.csv"),
-        csv("unique", `${workspace}/drafts/report.csv`),
+        csv("unique", "drafts/report.csv"),
         // Only a title shares a name with nothing: it shows no path.
-        csv("titled", `${workspace}/other/summary.csv`, "Summary"),
+        csv("titled", "other/summary.csv", "Summary"),
       ]}
     />
   );
@@ -101,6 +111,8 @@ test("files that show one name also show their path in the chat's folder", () =>
   expect(descriptions[0]).toContain("drafts/summary.csv · CSV · 512");
   expect(descriptions[1]).toContain("final/summary.csv · CSV · 512");
   expect(descriptions[2]).toContain("/tmp/onyx/summary.csv · CSV · 512");
+  // Not the whole VM path inside the working directory
+  expect(descriptions.slice(0, 2).join()).not.toContain("/vm/");
   expect(descriptions[3]).not.toContain("drafts/");
   expect(descriptions[4]).not.toContain("other/");
 });
@@ -115,6 +127,7 @@ test("an HTML file previews as source, not as a rendered page", async () => {
           name: "report.html",
           title: null,
           path: "/home/onyx/report.html",
+          display_path: "/home/onyx/report.html",
           size: HTML.length,
           mime_type: "text/html",
         },

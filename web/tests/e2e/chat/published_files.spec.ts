@@ -18,6 +18,7 @@ function report(fileId: string, title: string | null): MockPublishedFile {
     name: "report.md",
     title,
     path: "/home/onyx/workspaces/chat/report.md",
+    displayPath: "report.md",
     size: 2048,
     mimeType: "text/markdown",
   };
@@ -124,6 +125,7 @@ test.describe("Published files", () => {
       ...report("published-file-6", "Meeting notes"),
       name: "notes.md",
       path: "/home/onyx/workspaces/chat/notes.md",
+      displayPath: "notes.md",
     };
     const sessionId = await api.createChatSession("Published files");
     try {
@@ -188,6 +190,7 @@ test.describe("Published files", () => {
                 name: file.name,
                 title: file.title,
                 path: file.path,
+                display_path: file.displayPath,
                 size: file.size,
                 mime_type: file.mimeType,
                 message_id: messageId,

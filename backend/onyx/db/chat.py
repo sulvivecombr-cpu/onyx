@@ -25,7 +25,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import MultipleResultsFound
-from sqlalchemy.orm import Session, aliased, joinedload, load_only, selectinload
+from sqlalchemy.orm import (
+    InstrumentedAttribute,
+    Session,
+    aliased,
+    joinedload,
+    load_only,
+    selectinload,
+)
 from sqlalchemy.sql.expression import ColumnElement
 from sqlalchemy.sql.selectable import CTE, Select
 
@@ -935,28 +942,34 @@ def get_published_files_on_branch(
 ) -> list[ChatPublishedFile]:
     """The files that the model published on a branch, oldest first: the
     `CHAT_ARTIFACT` files in the `ChatMessage.files` of the branch's answers
-    and of the answers of the sessions that they spawned, recursively. The
-    path and title are those that `publish_files` stamped in the file record.
-    Files without a stamped path and files whose object is missing are left
-    out."""
+    and of the subagent responses whose run's turn root is on the branch,
+    ordered by that turn, then by response. The path and title are those that
+    `publish_files` stamped in the file record. Files without a path and files
+    whose object is missing are left out."""
     # One array parameter keeps the query the same size however long the branch is.
     branch = bindparam(
         "branch", list(branch_message_ids), type_=postgresql.ARRAY(Integer)
     )
+    # Sessions that the branch's answers spawned, recursively. A later turn
+    # can continue one of them, so its runs are only candidates here.
     spawned = (
-        select(
-            ChatSession.id,
-            ChatSession.spawned_by_message_id.label("anchor_id"),
-        )
+        select(ChatSession.id)
         .where(ChatSession.spawned_by_message_id == any_(branch))
         .cte("spawned_sessions", recursive=True)
     )
     # UNION stops traversal if corrupt ancestry repeats a row.
     spawned = spawned.union(
-        select(ChatSession.id, spawned.c.anchor_id)
+        select(ChatSession.id)
         .join(ChatMessage, ChatMessage.id == ChatSession.spawned_by_message_id)
         .join(spawned, ChatMessage.chat_session_id == spawned.c.id)
     )
+    # A subagent response is tied to its run's turn root, which must be on
+    # the branch: a run that a regenerated turn started does not count.
+    subagent_roots = ownership_roots(
+        ChatMessage.chat_session_id.in_(select(spawned.c.id))
+        & (ChatMessage.message_type == MessageType.ASSISTANT)
+        & (func.jsonb_typeof(ChatMessage.files) == "array")
+    ).subquery("subagent_roots")
     answers = union_all(
         select(
             ChatMessage.id.label("message_id"),
@@ -966,9 +979,9 @@ def get_published_files_on_branch(
             ChatMessage.id == any_(branch),
             ChatMessage.message_type == MessageType.ASSISTANT,
         ),
-        select(ChatMessage.id, spawned.c.anchor_id, ChatMessage.files)
-        .join(spawned, ChatMessage.chat_session_id == spawned.c.id)
-        .where(ChatMessage.message_type == MessageType.ASSISTANT),
+        select(ChatMessage.id, subagent_roots.c.root_id, ChatMessage.files)
+        .join(subagent_roots, subagent_roots.c.response_id == ChatMessage.id)
+        .where(subagent_roots.c.root_id == any_(branch)),
     ).subquery("answers")
     file_entry = (
         # Some rows hold a JSON null instead of a list.
@@ -1013,7 +1026,7 @@ def get_published_files_on_branch(
             name=display_name or file_id,
             title=title,
             path=path,
-            # Rows written before sizes were recorded show as 0.
+            # A file without a recorded size shows as 0.
             size=file_size or 0,
             mime_type=file_type,
             message_id=anchor_id,
@@ -2167,47 +2180,65 @@ def response_invocation_chain(
     return rows
 
 
-def ownership_root_id(db_session: Session, response_id: int) -> int | None:
-    """The newest turn root that the response's run depends on.
+def ownership_roots(response_ids: ColumnElement[bool]) -> Select:
+    """The newest turn root that each response's run depends on, as rows of
+    `response_id` and `root_id`, for the responses that `response_ids` (a
+    condition on `ChatMessage`) selects.
 
     A child run depends on the turn whose tool call started it and on the turns
     of its previous runs. Another turn can continue an agent, so a previous run
     can belong to a later turn than the invocation. All of these roots are on
-    one branch, so the newest is the latest. None when the response is missing.
+    one branch, so the newest is the latest. A response that is itself a turn
+    root is its own root.
     """
     question = aliased(ChatMessage)
-    nodes = (
-        select(
-            ChatMessage.id.label("message_id"),
-            ChatSession.spawned_by_message_id,
-            ToolCall.parent_chat_message_id.label("invoker_id"),
-            question.parent_message_id.label("previous_id"),
+
+    def nodes(origin_id: ColumnElement[int] | InstrumentedAttribute[int]) -> Select:
+        return (
+            select(
+                origin_id.label("response_id"),
+                ChatMessage.id.label("message_id"),
+                ChatSession.spawned_by_message_id,
+                ToolCall.parent_chat_message_id.label("invoker_id"),
+                question.parent_message_id.label("previous_id"),
+            )
+            .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
+            .outerjoin(question, question.id == ChatMessage.parent_message_id)
+            .outerjoin(ToolCall, ToolCall.id == question.invoking_tool_call_id)
         )
-        .join(ChatSession, ChatSession.id == ChatMessage.chat_session_id)
-        .outerjoin(question, question.id == ChatMessage.parent_message_id)
-        .outerjoin(ToolCall, ToolCall.id == question.invoking_tool_call_id)
-    )
-    walk = nodes.where(ChatMessage.id == response_id).cte(
-        "ownership_root_walk", recursive=True
+
+    walk = (
+        nodes(ChatMessage.id)
+        .where(response_ids)
+        .cte("ownership_root_walk", recursive=True)
     )
     # Each step goes to an older response, so the walk ends.
     walk = walk.union(
-        nodes.join(
+        nodes(walk.c.response_id)
+        .join(
             walk,
             or_(
                 ChatMessage.id == walk.c.invoker_id,
                 ChatMessage.id == walk.c.previous_id,
             ),
-        ).where(
+        )
+        .where(
             walk.c.spawned_by_message_id.is_not(None),
             ChatMessage.id < walk.c.message_id,
         )
     )
-    return db_session.scalar(
-        select(func.max(walk.c.message_id)).where(
-            walk.c.spawned_by_message_id.is_(None)
-        )
+    return (
+        select(walk.c.response_id, func.max(walk.c.message_id).label("root_id"))
+        .where(walk.c.spawned_by_message_id.is_(None))
+        .group_by(walk.c.response_id)
     )
+
+
+def ownership_root_id(db_session: Session, response_id: int) -> int | None:
+    """The newest turn root that the response's run depends on (see
+    `ownership_roots`). None when the response is missing."""
+    roots = ownership_roots(ChatMessage.id == response_id).subquery()
+    return db_session.scalar(select(roots.c.root_id))
 
 
 def root_response_id(db_session: Session, response: ChatMessage) -> int:

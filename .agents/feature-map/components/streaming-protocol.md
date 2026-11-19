@@ -246,7 +246,9 @@ files when the call published none (it publishes all or none). A
 `name` (the file name, which the download keeps), `title` (null when the
 model gave none), `path` (absolute and normalized in the VM, and the file's
 identity: a later publish of a `path` is the newer copy of that file, and each
-publish gives a new `file_id`), `size` in bytes and `mime_type`. Live and replay send the same two packets. The
+publish gives a new `file_id`), `display_path` (the path to show: relative
+to the chat's working directory, or the whole path outside it; derived from
+`path`), `size` in bytes and `mime_type`. Live and replay send the same two packets. The
 `publish_files_end` packets of a response list its published files. The
 session load's `published_files` lists those of the whole current branch,
 also of messages outside a paged load's page ([[chat-persistence]]). A sandbox call that

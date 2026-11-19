@@ -328,14 +328,29 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   const rightPanel = useCurrentRightPanel();
   const publishedFiles = useCurrentPublishedFiles();
   const publishedFilesPanelOpen = usePublishedFilesPanelVisible();
+  const latestPagePending = useChatSessionStore(
+    (state) =>
+      state.sessions.get(state.currentSessionId ?? "")?.latestPagePending ??
+      false
+  );
 
   // Close the Files panel when the branch has no published files, for
   // example after a branch switch. It stays closed until the user opens it.
+  // While the new branch's page loads, its files are not known yet.
   useEffect(() => {
-    if (publishedFilesPanelOpen && publishedFiles.length === 0) {
+    if (
+      publishedFilesPanelOpen &&
+      !latestPagePending &&
+      publishedFiles.length === 0
+    ) {
       updateCurrentRightPanel("publishedFiles", false);
     }
-  }, [publishedFilesPanelOpen, publishedFiles.length, updateCurrentRightPanel]);
+  }, [
+    publishedFilesPanelOpen,
+    latestPagePending,
+    publishedFiles.length,
+    updateCurrentRightPanel,
+  ]);
   const messageHistory = useCurrentMessageHistory();
   const messageTree = useCurrentMessageTree();
   // A chat opened for the first time has nothing to show until its fetch

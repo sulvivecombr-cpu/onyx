@@ -3,7 +3,7 @@ saved-details unions import it, so it imports only models and constants."""
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from onyx.server.features.build.sandbox.exec_output import (
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -15,7 +15,10 @@ from onyx.server.features.build.sandbox.exec_output import (
     WRITE_STDIN_DEFAULT_YIELD_MS,
     WRITE_STDIN_MAX_YIELD_MS,
 )
-from onyx.server.features.build.sandbox.models import ExecCompletionName
+from onyx.server.features.build.sandbox.models import (
+    SESSION_WORKSPACE_ROOT,
+    ExecCompletionName,
+)
 from onyx.utils.pydantic_util import OMITTED_WHEN_NONE
 
 _MAX_OUTPUT_TOKENS_DESCRIPTION = (
@@ -183,6 +186,18 @@ class PublishedFile(BaseModel):
     path: str
     size: int
     mime_type: str
+
+    @computed_field
+    @property
+    def display_path(self) -> str:
+        """The path to show: relative to the chat's working directory, or the
+        whole path outside it."""
+        prefix = f"{SESSION_WORKSPACE_ROOT}/"
+        if not self.path.startswith(prefix):
+            return self.path
+        # Drop the root and the session directory
+        _, _, relative = self.path.removeprefix(prefix).partition("/")
+        return relative or self.path
 
 
 class PublishedFiles(BaseModel):

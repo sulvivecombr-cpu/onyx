@@ -12,6 +12,7 @@ function file(
     name,
     title,
     path: `/home/onyx/${name}`,
+    display_path: `/home/onyx/${name}`,
     size: 2048,
     mime_type: "text/markdown",
   };

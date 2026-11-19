@@ -133,8 +133,8 @@ import AgentsPersonasAssistantsNote from '/snippets/agents-personas-assistants-n
     and `error` is set when the call failed. A replayed call has no `exec_output_delta`
     - `apply_patch_start` (with `patch` and `tool_name`) and `apply_patch_end` show a file edit and the files it changed
     - `publish_files_start` (with `files` and `description`) and `publish_files_end` show the files that the model
-    gave the user. Each file in `publish_files_end` has `file_id`, `name`, `title`, `path`, `size` and `mime_type`.
-    Download it from `/chat/file/{file_id}`. `path` (absolute in the VM) identifies a file:
+    gave the user. Each file in `publish_files_end` has `file_id`, `name`, `title`, `path`, `display_path`,
+    `size` and `mime_type`. Download it from `/chat/file/{file_id}`. `path` (absolute in the VM) identifies a file:
     a later publish of the same `path` is a newer copy of it. `error` is set when the call failed;
     then it published no file
     - A call that the user stopped, or that stopped with its code mode program, has no end packet. Stopping a

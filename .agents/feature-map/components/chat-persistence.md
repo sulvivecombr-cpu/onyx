@@ -117,16 +117,20 @@ GET /chat/get-chat-session/{id}
   get_published_files_on_branch            latest-page and shared loads only; one
                                            query: the CHAT_ARTIFACT files in the
                                            ChatMessage.files of the branch's
-                                           answers and of the answers of the
-                                           sessions they spawned
-                                           (spawned_by_message_id, recursively).
+                                           answers and of the subagent responses
+                                           (in sessions they spawned, recursively)
+                                           whose run's turn root
+                                           (db/chat.py:ownership_roots, the rule
+                                           of ownership_root_id) is on the branch.
+                                           A follow-up run that a later turn
+                                           started belongs to that turn. Order:
+                                           turn root, then response, then file.
                                            Path and title come from the file
                                            record's file_metadata, which
                                            publish_files writes (keys in
                                            configs/constants.py). Files without a
-                                           stamped path (published before the
-                                           stamp existed) and files whose object
-                                           is missing (file_size -1) are left out
+                                           path and files whose object is missing
+                                           (file_size -1) are left out
   translate_assistant_message_to_packets   runtime rows: read_chat_execution,
                                            read_response_replay_data ->
                                            chat/presentation.py:replay_response;
