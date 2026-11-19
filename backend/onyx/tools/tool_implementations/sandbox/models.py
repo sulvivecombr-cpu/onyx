@@ -5,6 +5,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from onyx.llm.models import ToolResult
 from onyx.server.features.build.sandbox.exec_output import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     EXEC_DEFAULT_YIELD_MS,
@@ -119,6 +120,19 @@ class SandboxExecResult(ExecCommandOutput):
     type: Literal["sandbox_exec"] = "sandbox_exec"
     # A byte or token cap removed output.
     truncated: bool = False
+
+
+class RetainedOutputResult(ToolResult):
+    """A result whose content is `output_prefix` and a cut of a tool's
+    output, with all the output that the tool kept. The chat's spill policy
+    (spill.py) measures and saves the kept output. These fields are never
+    serialized, so saved rows and traces do not hold the kept output."""
+
+    # The content before the output; a spill keeps it above the preview.
+    output_prefix: str = Field(exclude=True)
+    retained_output: str = Field(exclude=True, repr=False)
+    # Bytes that the tool dropped from the middle of retained_output.
+    omitted_bytes: int = Field(default=0, exclude=True)
 
 
 # The names of the file tools (sandbox_tools.py), which the patch card shows.

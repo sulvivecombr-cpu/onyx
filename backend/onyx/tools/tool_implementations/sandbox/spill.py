@@ -14,10 +14,11 @@ from onyx.tools.constants import (
     SKILLS_READ_TOOL_NAME,
 )
 from onyx.tools.models import CustomToolCallSummary, SpilledOutput
-from onyx.tools.tool_implementations.sandbox.sandbox_tools import (
-    ExecCommandTool,
-    WriteStdinTool,
+from onyx.tools.tool_implementations.sandbox.models import (
+    RetainedOutputResult,
+    SandboxExecResult,
 )
+from onyx.tools.tool_implementations.sandbox.sandbox_tools import ExecCommandTool
 from onyx.tools.tool_implementations.sandbox.turn import SandboxTurn
 from onyx.tools.tool_implementations.utils import truncation_marker
 from onyx.utils.logger import setup_logger
@@ -37,13 +38,10 @@ PREVIEW_TAIL_CHARS = 1_000
 # A shorter result stays whole: its preview would save less than half of it.
 SPILL_MIN_CHARS = 2 * (PREVIEW_HEAD_CHARS + PREVIEW_TAIL_CHARS)
 SPILL_MAX_BYTES = 64 << 20
-# Exec output spills from the tools' own output buffer; read_file and
-# skills_read page through their text, so a spill would only be read back;
-# the citeable tools keep their own limits and citations.
+# read_file and skills_read page through their text, so a spill would only
+# be read back; the citeable tools keep their own limits and citations.
 _KEEPS_RESULT = frozenset(
     {
-        ExecCommandTool.NAME,
-        WriteStdinTool.NAME,
         FILE_READER_TOOL_NAME,
         SKILLS_READ_TOOL_NAME,
         *CITEABLE_TOOLS_NAMES,
@@ -59,7 +57,10 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     Writing the same call's result again replaces the file; an amendment
     writes its own file."""
     result = context.result
-    text = result.content
+    # A result with output cut for the model (exec_command, write_stdin):
+    # the limits and the file use all the output that the tool kept.
+    retained = result if isinstance(result, RetainedOutputResult) else None
+    text = result.content if retained is None else retained.retained_output
     call = context.calls[0]
     if call.name in _KEEPS_RESULT or len(text) <= SPILL_MIN_CHARS:
         return result
@@ -68,7 +69,7 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
     if (
         len(text) <= RESULT_MAX_CHARS
         and lines <= RESULT_MAX_LINES
-        and step_chars + len(text) <= STEP_MAX_CHARS
+        and step_chars + len(result.content) <= STEP_MAX_CHARS
     ):
         return result
 
@@ -102,21 +103,30 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
             if len(data) > SPILL_MAX_BYTES
             else ""
         )
+        dropped = (
+            f"The sandbox dropped {retained.omitted_bytes:,} bytes from the "
+            "middle of the output; the file has the rest.\n"
+            if retained is not None and retained.omitted_bytes
+            else ""
+        )
         content = (
             f'<persisted-output path="{path}" bytes={len(data)} lines={lines}>\n'
             f"Preview (first {PREVIEW_HEAD_CHARS:,} characters):\n{head}\n"
             f"Preview (last {PREVIEW_TAIL_CHARS:,} characters):\n{tail}\n"
-            f"{cut}The full output is in the file while the sandbox runs. Use "
+            f"{cut}{dropped}The full output is in the file while the sandbox runs. Use "
             f"{ExecCommandTool.NAME} (grep, sed, head, tail) on the path for the "
             "rest. If the file is missing, the sandbox restarted; call the tool "
             "again.\n</persisted-output>"
         )
         spilled = SpilledOutput(head=head, tail=tail)
-    # A custom or MCP tool's output in the details becomes the preview, so the
-    # saved history does not hold the text that the model did not get. Python
-    # and code mode details keep their own bounded output.
+    # The output in the details of an exec call, or of a custom or MCP tool,
+    # becomes the preview, so the saved history does not hold the text that
+    # the model did not get. Python and code mode details keep their own
+    # bounded output.
     details = result.details
-    if isinstance(details, CustomToolCallSummary) and details.copies_output:
+    if isinstance(details, SandboxExecResult):
+        details = details.model_copy(update={"output": content, "truncated": True})
+    elif isinstance(details, CustomToolCallSummary) and details.copies_output:
         details = details.model_copy(
             update={
                 "tool_result": None if spilled is not None else content,
@@ -130,4 +140,6 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
         details = CustomToolCallSummary(
             tool_name=call.name, response_type="text", tool_result=None, spilled=spilled
         )
+    if retained is not None:
+        content = retained.output_prefix + content
     return result.model_copy(update={"content": content, "details": details})
