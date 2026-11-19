@@ -198,3 +198,43 @@ function latestMessageNodeId(sessionId: string): number | undefined {
     .sessions.get(sessionId)?.messageTree;
   return tree ? getLatestMessageChain(tree).at(-1)?.nodeId : undefined;
 }
+
+// Counts branch switches, so only the newest one ends the pending page.
+let branchSwitchCount = 0;
+
+/**
+ * Follows a branch switch: waits for the server to save the selected branch,
+ * then, when the branch's messages are not loaded (`reloadsPage`), loads its
+ * latest page. Until then the session's `latestPageSwitch` names this switch,
+ * so the chat knows the branch's published files are not known yet. Returns
+ * whether the server saved the branch.
+ */
+export async function loadSelectedBranch(
+  sessionId: string,
+  saved: Promise<Response>,
+  reloadsPage: boolean
+): Promise<boolean> {
+  const switchId = ++branchSwitchCount;
+  if (reloadsPage) {
+    useChatSessionStore
+      .getState()
+      .updateSessionData(sessionId, { latestPageSwitch: switchId });
+  }
+  try {
+    const response = await saved;
+    if (!response.ok) {
+      console.error("Failed to save the selected branch", {
+        sessionId,
+        status: response.status,
+      });
+      return false;
+    }
+    if (reloadsPage) await reloadLatestChatPage(sessionId);
+    return true;
+  } finally {
+    const store = useChatSessionStore.getState();
+    if (store.sessions.get(sessionId)?.latestPageSwitch === switchId) {
+      store.updateSessionData(sessionId, { latestPageSwitch: null });
+    }
+  }
+}

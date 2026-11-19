@@ -198,14 +198,16 @@
   (the shared view's header for a shared chat). It opens the Files panel in
   the right panel, where Sources also opens; one panel shows at a time. The
   panel lists the files of every answer on the selected branch, also answers
-  that are not loaded and their subagents: one entry per VM path, the newest
+  that are not loaded and their subagents: one entry per VM path, the latest
   publish of it, newest first, with its title or else its name. Each previews
   and downloads like a card. When the branch has no files, the panel closes
   until the user opens it again; after a branch switch it waits for the new
-  branch's latest page (`latestPagePending`) before it decides. A closed panel (Files or Sources) cannot be
-  focused. Escape closes only the top layer: an open preview first, then the
-  panel, and focus returns to the panel's opener. On a
-  narrow screen the panel opens as a modal.
+  branch's latest page (`latestPageSwitch`, set and cleared by
+  `lib/chat/pagedSession.ts:loadSelectedBranch` for the newest switch only)
+  before it decides. A closed panel (Files or Sources) cannot be focused.
+  Escape closes only the top layer: an open preview first, then the panel,
+  and focus returns to the panel's opener. On a narrow screen the panel
+  opens as a modal.
 - **A user rates, copies or shares an answer.** Copy turns markdown tables into
   tab-separated text so a spreadsheet keeps the columns. Each answer table
   also has its own copy button, which writes HTML with links and full source

@@ -330,8 +330,8 @@ export default function AppPage({ firstMessage }: ChatPageProps) {
   const publishedFilesPanelOpen = usePublishedFilesPanelVisible();
   const latestPagePending = useChatSessionStore(
     (state) =>
-      state.sessions.get(state.currentSessionId ?? "")?.latestPagePending ??
-      false
+      (state.sessions.get(state.currentSessionId ?? "")?.latestPageSwitch ??
+        null) !== null
   );
 
   // Close the Files panel when the branch has no published files, for

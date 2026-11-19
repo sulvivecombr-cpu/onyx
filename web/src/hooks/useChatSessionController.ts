@@ -26,7 +26,7 @@ import {
 } from "@/app/app/stores/useChatSessionStore";
 import { useIncognito } from "@/providers/IncognitoProvider";
 import { useUser } from "@/providers/UserProvider";
-import { chatPageUrl, reloadLatestChatPage } from "@/lib/chat/pagedSession";
+import { chatPageUrl, loadSelectedBranch } from "@/lib/chat/pagedSession";
 import type { ProjectFile } from "@/lib/projects/types";
 import { getProjectFilesForSession } from "@/lib/projects/svc";
 import { AppInputBarHandle } from "@/sections/input/AppInputBar";
@@ -490,34 +490,20 @@ export default function useChatSessionController({
           // Once the server has the new branch, load its last page.
           const branch = getLatestMessageChain(newMessageTree);
           const nextId = branch[branch.length - 1]?.latestChildNodeId;
-          const reloadsPage = nextId != null && !newMessageTree.has(nextId);
-          const setPagePending = (latestPagePending: boolean) => {
-            if (currentSessionId && reloadsPage) {
-              useChatSessionStore
-                .getState()
-                .updateSessionData(currentSessionId, { latestPagePending });
-            }
-          };
-          setPagePending(true);
-          void saved
-            .then(async (response) => {
-              if (!response.ok) {
-                console.error("Failed to save the selected branch", {
-                  messageId: message.messageId,
-                  status: response.status,
-                });
-                return;
+          if (!currentSessionId) return;
+          void loadSelectedBranch(
+            currentSessionId,
+            saved,
+            nextId != null && !newMessageTree.has(nextId)
+          )
+            .then(async (savedOk) => {
+              if (savedOk) {
+                await mutateCache(SWR_KEYS.chatSessionStatus(currentSessionId));
               }
-              if (!currentSessionId) return;
-              if (reloadsPage) {
-                await reloadLatestChatPage(currentSessionId);
-              }
-              await mutateCache(SWR_KEYS.chatSessionStatus(currentSessionId));
             })
             .catch((error: unknown) => {
               console.error("Could not refresh the selected branch", error);
-            })
-            .finally(() => setPagePending(false));
+            });
         } else {
           console.error("Message has no messageId", nodeId);
         }

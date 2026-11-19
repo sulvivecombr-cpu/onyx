@@ -124,7 +124,9 @@ GET /chat/get-chat-session/{id}
                                            of ownership_root_id) is on the branch.
                                            A follow-up run that a later turn
                                            started belongs to that turn. Order:
-                                           turn root, then response, then file.
+                                           publish time (FileRecord.created_at,
+                                           then file ID), so the last copy of a
+                                           path is its latest publish.
                                            Path and title come from the file
                                            record's file_metadata, which
                                            publish_files writes (keys in

@@ -187,6 +187,11 @@ class PublishedFile(BaseModel):
     size: int
     mime_type: str
 
+
+class PublishedFileView(PublishedFile):
+    """A published file as clients get it, in packets and the session load:
+    with the path to show. Saved details keep the plain `PublishedFile`."""
+
     @computed_field
     @property
     def display_path(self) -> str:

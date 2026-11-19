@@ -1,6 +1,7 @@
 """The chat detail route against Postgres and the shared cache."""
 
 from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Any
 from uuid import uuid4
@@ -373,4 +374,49 @@ def test_a_subagent_run_counts_on_the_branch_of_the_turn_that_started_it(
     assert listed() == [
         ("/w/notes.md", None, first.id),
         ("/w/report.md", "Draft", second.id),
+    ]
+
+
+@pytest.mark.usefixtures("initialize_file_store")
+def test_a_background_run_that_publishes_after_a_later_turn_is_the_latest_copy(
+    db_session: Session, owner: User
+) -> None:
+    """A1 starts a background subagent. A2 publishes the report, and then the
+    subagent's run publishes the same path. The list is in publish order, so
+    the subagent's copy is the latest, though its run belongs to A1."""
+    chat = _new_chat(db_session, owner)
+    question = _add(
+        db_session, get_or_create_root_message(chat.id, db_session), MessageType.USER
+    )
+    first = _add(db_session, question, MessageType.ASSISTANT)
+    agent = _new_chat(db_session, owner, spawned_by=first)
+    run_question = _run(
+        db_session, first, get_or_create_root_message(agent.id, db_session)
+    )
+    turn_copy = _publish(chat, "/w/report.md", "From the turn")
+    second = _add(
+        db_session,
+        _add(db_session, first, MessageType.USER),
+        MessageType.ASSISTANT,
+        [turn_copy],
+    )
+    background_copy = _publish(agent, "/w/report.md", "From the subagent")
+    _add(db_session, run_question, MessageType.ASSISTANT, [background_copy])
+    # Publish times one second apart, so the order does not rest on the clock.
+    published_at = datetime(2026, 11, 18, tzinfo=timezone.utc)
+    for offset, descriptor in enumerate((turn_copy, background_copy)):
+        db_session.execute(
+            update(FileRecord)
+            .where(FileRecord.file_id == descriptor["id"])
+            .values(created_at=published_at + timedelta(seconds=offset))
+        )
+    db_session.commit()
+
+    detail = chat_backend.get_chat_session(
+        chat.id, limit=2, user=owner, db_session=db_session
+    )
+
+    assert [(file.title, file.message_id) for file in detail.published_files] == [
+        ("From the turn", second.id),
+        ("From the subagent", first.id),
     ]

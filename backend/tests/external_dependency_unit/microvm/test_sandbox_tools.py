@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict, JsonValue
-from sqlalchemy import select, update
+from sqlalchemy import Text, cast, select, update
 from sqlalchemy.orm import Session
 
 from onyx.access.access import user_can_access_chat_file
@@ -70,6 +70,7 @@ from onyx.db.models import (
     Sandbox,
     User,
 )
+from onyx.db.models import ToolCall as DBToolCall
 from onyx.db.persona import upsert_persona
 from onyx.db.sandbox import (
     create_sandbox__no_commit,
@@ -2254,6 +2255,19 @@ def test_published_files_stream_replay_belong_to_the_message_and_go_with_the_cha
             ),
         }
         assert store.read_file(file.file_id).read() == data
+    # Packets carry the path to show; the saved details do not store it.
+    assert [file.display_path for file in published] == [
+        "out/report.csv",
+        chart,
+        "out/report.csv",
+    ]
+    saved_results = db_session.scalars(
+        select(cast(DBToolCall.result, Text)).where(
+            DBToolCall.chat_session_id == chat.chat_session_id
+        )
+    ).all()
+    assert any(published[0].file_id in saved for saved in saved_results)
+    assert not any("display_path" in saved for saved in saved_results)
     assert _answer_file_ids(db_session, chat.chat_session_id) == [
         file.file_id for file in published
     ]

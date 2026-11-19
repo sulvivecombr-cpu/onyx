@@ -22,7 +22,7 @@ from onyx.server.features.action_policies.models import DecisionBody
 from onyx.server.query_and_chat.streaming_models import Packet, StreamingError
 from onyx.tools.models import ToolOptions
 from onyx.tools.tool_implementations.question.models import ToolQuestionAnswer
-from onyx.tools.tool_implementations.sandbox.models import PublishedFile
+from onyx.tools.tool_implementations.sandbox.models import PublishedFileView
 from onyx.utils.postgres_sanitization import sanitize_string
 
 AUTO_PLACE_AFTER_LATEST_MESSAGE = -1
@@ -498,7 +498,7 @@ class ChatSessionProcessingStatus(BaseModel):
     approvals_version: str = ""
 
 
-class ChatPublishedFile(PublishedFile):
+class ChatPublishedFile(PublishedFileView):
     """A file that the model published on the current branch."""
 
     # The branch's answer that published the file, or that spawned the

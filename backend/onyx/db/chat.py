@@ -943,7 +943,7 @@ def get_published_files_on_branch(
     """The files that the model published on a branch, oldest first: the
     `CHAT_ARTIFACT` files in the `ChatMessage.files` of the branch's answers
     and of the subagent responses whose run's turn root is on the branch,
-    ordered by that turn, then by response. The path and title are those that
+    in publish order (the file record's creation, then its ID). The path and title are those that
     `publish_files` stamped in the file record. Files without a path and files
     whose object is missing are left out."""
     # One array parameter keeps the query the same size however long the branch is.
@@ -991,7 +991,7 @@ def get_published_files_on_branch(
                 else_=cast(literal("[]"), postgresql.JSONB),
             )
         )
-        .table_valued(column("value", postgresql.JSONB), with_ordinality="position")
+        .table_valued(column("value", postgresql.JSONB))
         .render_derived(name="file_entry")
         .lateral()
     )
@@ -1014,11 +1014,9 @@ def get_published_files_on_branch(
             path.is_not(None),
             FileRecord.file_size.is_distinct_from(FILE_SIZE_MISSING_SENTINEL),
         )
-        .order_by(
-            func.array_position(branch, answers.c.anchor_id),
-            answers.c.message_id,
-            file_entry.c.position,
-        )
+        # Publish order: the newest publish of a path comes last, also when a
+        # background run publishes after a later turn.
+        .order_by(FileRecord.created_at, FileRecord.file_id)
     ).all()
     return [
         ChatPublishedFile(

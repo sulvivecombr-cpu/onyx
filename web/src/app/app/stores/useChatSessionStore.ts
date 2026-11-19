@@ -56,9 +56,9 @@ interface ChatSessionData {
   hasOlderMessages: boolean;
   // The latest load's files published on the branch, loaded messages or not.
   branchPublishedFiles: ChatPublishedFile[];
-  // A branch switch waits for the new branch's latest page, so the branch's
-  // published files are not known yet.
-  latestPagePending: boolean;
+  // The branch switch whose latest page is loading, so the branch's
+  // published files are not known yet (lib/chat/pagedSession.ts)
+  latestPageSwitch: number | null;
   // The `approvals_version` of the load whose approval requests the chat shows.
   approvalsVersion?: string;
   isLoadingOlderMessages: boolean;
@@ -220,7 +220,7 @@ const createInitialSessionData = (
   isFetchingChatMessages: false,
   hasOlderMessages: false,
   branchPublishedFiles: [],
-  latestPagePending: false,
+  latestPageSwitch: null,
   isLoadingOlderMessages: false,
   uncaughtError: null,
   loadingError: null,
