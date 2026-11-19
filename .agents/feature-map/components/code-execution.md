@@ -336,9 +336,12 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         written by its retained_output (up to 1 MiB, head
                                         and tail; the preview notes the bytes the buffer
                                         dropped), the step budget counts its token-cut
-                                        content, and its SandboxExecResult.output becomes the
-                                        preview under the same header. A failed write, or
-                                        text that cannot be encoded (a lone surrogate), keeps
+                                        content, and the model gets the preview under the
+                                        same header. SandboxExecResult.spilled (SpilledOutput
+                                        with omitted_bytes; output empty) marks it, and the
+                                        ExecEnd output is the card text built from it. A
+                                        failed write, or text that cannot be encoded (a lone
+                                        surrogate), keeps
                                         the head and tail with a note.
                                         Calls inside a code mode program skip it; the cell's
                                         results spill, and so do the release hooks'

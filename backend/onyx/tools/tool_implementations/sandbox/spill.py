@@ -118,14 +118,26 @@ def spill_large_result(turn: SandboxTurn, context: ToolResultContext) -> ToolRes
             "rest. If the file is missing, the sandbox restarted; call the tool "
             "again.\n</persisted-output>"
         )
-        spilled = SpilledOutput(head=head, tail=tail)
+        spilled = SpilledOutput(
+            head=head,
+            tail=tail,
+            omitted_bytes=retained.omitted_bytes
+            if retained is not None and retained.omitted_bytes
+            else None,
+        )
     # The output in the details of an exec call, or of a custom or MCP tool,
     # becomes the preview, so the saved history does not hold the text that
     # the model did not get. Python and code mode details keep their own
     # bounded output.
     details = result.details
     if isinstance(details, SandboxExecResult):
-        details = details.model_copy(update={"output": content, "truncated": True})
+        details = details.model_copy(
+            update={
+                "output": "" if spilled is not None else content,
+                "truncated": True,
+                "spilled": spilled,
+            }
+        )
     elif isinstance(details, CustomToolCallSummary) and details.copies_output:
         details = details.model_copy(
             update={

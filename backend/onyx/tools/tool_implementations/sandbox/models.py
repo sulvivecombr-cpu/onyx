@@ -114,12 +114,24 @@ class ExecCommandOutput(BaseModel):
     )
 
 
+class SpilledOutput(BaseModel):
+    """The preview of a result whose full text went to a file in the sandbox
+    VM (spill.py); the user's card shows it with a note."""
+
+    head: str
+    tail: str
+    # Bytes that the tool dropped from the middle before the save.
+    omitted_bytes: Annotated[int | None, OMITTED_WHEN_NONE] = None
+
+
 class SandboxExecResult(ExecCommandOutput):
     """Saved details of an exec_command or write_stdin call."""
 
     type: Literal["sandbox_exec"] = "sandbox_exec"
     # A byte or token cap removed output.
     truncated: bool = False
+    # Set, with an empty `output`, when the output went to the sandbox VM.
+    spilled: Annotated[SpilledOutput | None, OMITTED_WHEN_NONE] = None
 
 
 class RetainedOutputResult(ToolResult):

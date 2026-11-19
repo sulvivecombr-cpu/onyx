@@ -15,7 +15,10 @@ from onyx.file_store.models import (
 )
 from onyx.integrations.models import ActionSettings, ApprovalMode
 from onyx.tools.constants import FILE_READER_MAX_CHARS
-from onyx.tools.tool_implementations.sandbox.models import PublishedFile
+from onyx.tools.tool_implementations.sandbox.models import (
+    PublishedFile,
+    SpilledOutput,
+)
 from onyx.tools.tool_implementations.search.models import SearchContext
 from onyx.utils.pydantic_util import OMITTED_WHEN_NONE
 
@@ -262,15 +265,6 @@ class SearchToolUsage(str, Enum):
 
 class CustomToolUserFileSnapshot(BaseModel):
     file_ids: list[str]  # References to saved images or CSVs
-
-
-class SpilledOutput(BaseModel):
-    """The preview of a result whose full text went to a file in the sandbox
-    VM (tools/tool_implementations/sandbox/spill.py); the user's card shows it
-    with a note."""
-
-    head: str
-    tail: str
 
 
 class CustomToolCallSummary(BaseModel):

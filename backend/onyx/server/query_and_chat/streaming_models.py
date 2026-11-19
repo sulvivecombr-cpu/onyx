@@ -557,7 +557,8 @@ class ExecOutputDelta(BaseObj):
 
 class ExecEnd(BaseObj):
     type: Literal["exec_end"] = StreamingType.EXEC_END.value
-    # The output that the model got (cut to its token budget, head and tail).
+    # The output that the model got (cut to its token budget, head and tail),
+    # or, when it went to the sandbox VM, its head and tail with a plain note.
     # None only with an error.
     output: str | None = None
     exit_code: int | None = None

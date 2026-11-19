@@ -100,6 +100,7 @@ from onyx.tools.tool_implementations.sandbox.models import (
     ApplyPatchResult,
     PublishedFiles,
     SandboxExecResult,
+    SpilledOutput,
     WriteStdinArguments,
 )
 from onyx.tools.tool_implementations.sandbox.patch import display_patch
@@ -127,6 +128,20 @@ HIDDEN_TOOLS = frozenset(
 
 # The card's note between the head and the tail of a spilled result.
 SPILLED_OUTPUT_NOTE = "Large output: the full result was saved to the sandbox."
+
+
+def _spilled_card_text(spilled: SpilledOutput) -> str:
+    """What the user's card shows of a spilled result: the head, a plain
+    note, and the tail; never the model's instructions."""
+    dropped = (
+        f" The sandbox dropped {spilled.omitted_bytes:,} bytes from the middle "
+        "of the output."
+        if spilled.omitted_bytes
+        else ""
+    )
+    return f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}{dropped}]\n\n{spilled.tail}"
+
+
 # Tools whose code argument streams to the browser while the model writes it.
 CODE_ARGUMENT_TOOLS = frozenset({PythonTool.NAME, CODE_MODE_TOOL_NAME})
 # Tools whose calls observe a code mode cell; each call renders as one code mode card.
@@ -902,7 +917,7 @@ class ToolRenderer:
             spilled = details.spilled
             data: JsonValue = None
             if spilled is not None:
-                data = f"{spilled.head}\n\n[{SPILLED_OUTPUT_NOTE}]\n\n{spilled.tail}"
+                data = _spilled_card_text(spilled)
             elif not isinstance(details.tool_result, CustomToolUserFileSnapshot):
                 data = details.tool_result
             error = details.error
@@ -979,7 +994,9 @@ class ToolRenderer:
         else:
             self._last_details = details
             obj = packets.ExecEnd(
-                output=details.output,
+                output=details.output
+                if details.spilled is None
+                else _spilled_card_text(details.spilled),
                 exit_code=details.exit_code,
                 completion=details.completion,
                 session_id=details.session_id,
