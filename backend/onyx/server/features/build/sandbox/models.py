@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Literal, TypeAlias
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from onyx.db.enums import SandboxStatus
 from onyx.server.features.build.sandbox.image.sandbox_daemon.models import (
@@ -195,6 +195,11 @@ class ExecCommandResult(BaseModel):
 
     # Output of this call, cut to max_output_tokens (head and tail).
     output: str
+    # All output that the call kept before that cut: the head and tail of
+    # EXEC_CALL_OUTPUT_MAX_BYTES, with a marker of the omitted middle.
+    retained_output: str = Field(repr=False)
+    # Bytes of the middle that the byte cap dropped from retained_output.
+    omitted_bytes: int
     # Set while the command runs: pass it to write_stdin.
     session_id: str | None
     # Set when the command exited. None while it runs, or when a signal,

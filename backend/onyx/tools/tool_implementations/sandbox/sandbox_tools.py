@@ -77,6 +77,7 @@ from onyx.tools.tool_implementations.sandbox.models import (
     PublishedFile,
     PublishedFiles,
     PublishFilesArguments,
+    RetainedOutputResult,
     SandboxExecResult,
     WriteArguments,
     WriteStdinArguments,
@@ -136,7 +137,7 @@ def _sandbox_errors_as_tool_errors() -> Iterator[None]:
 
 def _exec_tool_result(
     events: Generator[ExecEvent], invocation: ToolInvocation
-) -> ToolResult:
+) -> RetainedOutputResult:
     """Stream the output as progress; the result has the exec header text and
     the saved details."""
     result: ExecCommandResult | None = None
@@ -153,8 +154,9 @@ def _exec_tool_result(
     return _exec_result(result)
 
 
-def _exec_result(result: ExecCommandResult) -> ToolResult:
-    """The exec header text and output, with the saved details."""
+def _exec_result(result: ExecCommandResult) -> RetainedOutputResult:
+    """The exec header text and output, with the saved details and all the
+    output that the call kept, for the chat's spill policy."""
     header = [f"Wall time: {result.wall_time_seconds:.4f} seconds"]
     if result.exit_code is not None:
         header.append(f"Process exited with code {result.exit_code}")
@@ -164,9 +166,13 @@ def _exec_result(result: ExecCommandResult) -> ToolResult:
         header.append(f"Process running with session ID {result.session_id}")
     header.append(f"Original token count: {result.original_token_count}")
     header.append("Output:")
-    return ToolResult(
-        content="\n".join(header) + "\n" + result.output,
+    prefix = "\n".join(header) + "\n"
+    return RetainedOutputResult(
+        content=prefix + result.output,
         details=SandboxExecResult.model_validate(result, from_attributes=True),
+        output_prefix=prefix,
+        retained_output=result.retained_output,
+        omitted_bytes=result.omitted_bytes,
     )
 
 

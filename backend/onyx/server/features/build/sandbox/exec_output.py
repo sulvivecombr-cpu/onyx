@@ -138,19 +138,19 @@ class ExecOutputBuffer:
     def truncated(self) -> bool:
         return self._dropped > 0 or self._lost
 
+    @property
+    def omitted_bytes(self) -> int:
+        """Bytes between the head and the tail that the byte cap dropped."""
+        return self._dropped
+
     def text(self) -> str:
+        """The kept output: the head, a marker of the omitted bytes, and the
+        tail."""
         head = "".join(self._head)
         tail = "".join(self._tail)
         if self._dropped:
             return head + _omitted_marker(self._dropped, "bytes") + tail
         return head + tail
-
-    def cut(self) -> tuple[str, bool, int]:
-        """The output for the model (head and tail within its tokens),
-        whether a cap cut it, and the token count before the cut."""
-        full = self.text()
-        output, cut = cut_to_tokens(full, self.max_output_tokens)
-        return output, cut or self.truncated, estimate_tokens(full)
 
 
 def estimate_tokens(text: str) -> int:

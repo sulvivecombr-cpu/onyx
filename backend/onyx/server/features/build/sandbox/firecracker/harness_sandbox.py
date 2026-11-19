@@ -83,6 +83,8 @@ from onyx.server.features.build.sandbox.exec_output import (
     WRITE_STDIN_DEFAULT_YIELD_MS,
     WRITE_STDIN_MAX_YIELD_MS,
     ExecOutputBuffer,
+    cut_to_tokens,
+    estimate_tokens,
 )
 from onyx.server.features.build.sandbox.firecracker.harness_state import (
     EXEC_SESSIONS_PREFIX,
@@ -786,18 +788,21 @@ class FirecrackerHarnessSandbox(HarnessSandbox, SandboxActivityProbe):
             buffer.session_id = None
             if text := buffer.finish():
                 yield ExecOutputDelta(text=text)
-        output, truncated, original_token_count = buffer.cut()
+        retained = buffer.text()
+        output, cut = cut_to_tokens(retained, buffer.max_output_tokens)
         exited = result is not None and result.completion is ExecCompletion.EXITED
         yield ExecCommandResult(
             output=output,
+            retained_output=retained,
+            omitted_bytes=buffer.omitted_bytes,
             session_id=buffer.session_id,
             exit_code=result.exit_code if result is not None and exited else None,
             completion=None
             if result is None
             else _COMPLETION_NAMES.get(result.completion),
             wall_time_seconds=time.monotonic() - buffer.started_at,
-            original_token_count=original_token_count,
-            truncated=truncated,
+            original_token_count=estimate_tokens(retained),
+            truncated=cut or buffer.truncated,
         )
 
     def _kill_if_stopped(

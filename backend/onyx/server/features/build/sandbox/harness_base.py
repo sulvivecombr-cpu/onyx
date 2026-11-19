@@ -18,7 +18,8 @@ Exec contract (Codex `exec_command` / `write_stdin`):
 - `write_stdin` with no chars polls for new output. Chars go to the
   command's stdin. "\\x03" interrupts the command.
 - Output of one call keeps at most `EXEC_CALL_OUTPUT_MAX_BYTES` (head and
-  tail); the result text keeps at most `max_output_tokens` (head and tail).
+  tail), in the result's `retained_output`; the result's `output` keeps at
+  most `max_output_tokens` of it (head and tail).
 - Exec session IDs stay valid across turns and API pods until the command's
   record is evicted, or the sandbox stops (idle stop, restore): then the call
   raises `ExecSessionEndedError`.

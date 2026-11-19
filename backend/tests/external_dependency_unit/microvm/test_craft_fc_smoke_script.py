@@ -59,6 +59,8 @@ class FakeProbe:
 def _result(output: str, exit_code: int = 0) -> ExecCommandResult:
     return ExecCommandResult(
         output=output,
+        retained_output=output,
+        omitted_bytes=0,
         session_id=None,
         exit_code=exit_code,
         completion="exited",

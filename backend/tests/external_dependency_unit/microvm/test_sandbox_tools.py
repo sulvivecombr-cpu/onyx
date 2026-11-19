@@ -6,6 +6,7 @@ the message's files, the chat delete), the turn lifecycle, the Sandbox row
 and the chat delete purge."""
 
 import json
+import re
 import threading
 import time
 from collections.abc import Callable, Generator, Iterator, Sequence
@@ -89,6 +90,7 @@ from onyx.llm.cancellation import (
     cancellation_scope,
 )
 from onyx.llm.interfaces import LLMConfig
+from onyx.llm.model_request import ChatCompletionMessage
 from onyx.llm.model_response import (
     ChatCompletionDeltaToolCall,
     Delta,
@@ -107,6 +109,7 @@ from onyx.microvm.daemon_client import SandboxDaemonErrorReason
 from onyx.microvm.generated.sandboxd.v1 import sandboxd_pb2
 from onyx.server.features.action_policies.models import ApprovalChoice
 from onyx.server.features.build.sandbox import harness_factory
+from onyx.server.features.build.sandbox.exec_output import EXEC_CALL_OUTPUT_MAX_BYTES
 from onyx.server.features.build.sandbox.firecracker import (
     harness_sandbox,
     harness_state,
@@ -190,6 +193,7 @@ from tests.external_dependency_unit.code_mode_helpers import (
     saved_cells,
     send,
     tool_step,
+    tool_text,
 )
 from tests.external_dependency_unit.conftest import MakeTestUser
 from tests.external_dependency_unit.db.test_chat_tool_options import (
@@ -2916,3 +2920,145 @@ def test_a_chat_without_a_sandbox_keeps_a_large_result_whole(
     assert not any(
         path.startswith(TOOL_RESULTS_DIR) for (_, _, path) in node.agent.files
     )
+
+
+def _seq(count: int) -> str:
+    """The output of `seq <count>` in the fake daemon."""
+    return "".join(f"{n}\n" for n in range(1, count + 1))
+
+
+def _preview(path: str, kept: str, note: str = "") -> str:
+    """The spill preview of output whose kept text is `kept` (ASCII lines)."""
+    return (
+        f'<persisted-output path="{path}" bytes={len(kept)} '
+        f"lines={kept.count('\n')}>\n"
+        f"Preview (first 2,000 characters):\n{kept[:2000]}\n"
+        f"Preview (last 1,000 characters):\n{kept[-1000:]}\n"
+        f"{note}The full output is in the file while the sandbox runs. Use "
+        "exec_command (grep, sed, head, tail) on the path for the rest. If the "
+        "file is missing, the sandbox restarted; call the tool again."
+        "\n</persisted-output>"
+    )
+
+
+def _card(kept: str, dropped: int = 0) -> str:
+    """What the terminal card shows of spilled output that kept `kept`."""
+    note = (
+        f" The sandbox dropped {dropped:,} bytes from the middle of the output."
+        if dropped
+        else ""
+    )
+    return f"{kept[:2000]}\n\n[{SPILLED_OUTPUT_NOTE}{note}]\n\n{kept[-1000:]}"
+
+
+def _exec_end(parts: Sequence[object]) -> packets.ExecEnd:
+    [end] = [obj for obj in _sandbox_packets(parts) if isinstance(obj, packets.ExecEnd)]
+    return end
+
+
+@pytest.mark.parametrize(
+    "count",
+    [
+        pytest.param(20_000, id="over_the_result_limit"),
+        pytest.param(300_000, id="over_the_kept_output"),
+    ],
+)
+@pytest.mark.usefixtures("node")
+def test_large_command_output_spills_to_the_vm_and_the_history_keeps_the_preview(
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+    count: int,
+) -> None:
+    llm = ChatLLM(
+        [
+            tool_step(ExecCommandTool.NAME, "seq", {"cmd": f"seq {count}"}),
+            Delta(content="Done."),
+        ]
+    )
+    parts = chat.send(llm)
+
+    output = _seq(count)
+    # The call keeps the head and the tail of the output, and marks the
+    # middle that it dropped.
+    half = EXEC_CALL_OUTPUT_MAX_BYTES // 2
+    dropped = max(len(output) - EXEC_CALL_OUTPUT_MAX_BYTES, 0)
+    kept = (
+        output[:half] + f"\n[... {dropped} bytes omitted ...]\n" + output[-half:]
+        if dropped
+        else output
+    )
+    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    assert path.endswith("_seq.txt")
+    assert data == kept.encode()
+    preview = _preview(
+        path,
+        kept,
+        f"The sandbox dropped {dropped:,} bytes from the middle of the output; "
+        "the file has the rest.\n"
+        if dropped
+        else "",
+    )
+    shown = last_tool_text(llm, "seq")
+    assert shown.startswith("Wall time: ")
+    assert shown.endswith(
+        "Process exited with code 0\n"
+        f"Original token count: {(len(kept) + 3) // 4}\nOutput:\n{preview}"
+    )
+    # The history keeps only the preview, and the card shows it with a plain
+    # note, the same live and on a reload.
+    [saved] = _saved_results(db_session, chat.chat_session_id)
+    assert saved.content == shown
+    assert isinstance(saved.details, SandboxExecResult)
+    assert saved.details.output == ""
+    assert saved.details.truncated
+    assert saved.details.spilled == SpilledOutput(
+        head=kept[:2000], tail=kept[-1000:], omitted_bytes=dropped or None
+    )
+    live = _exec_end(parts)
+    assert live.output == _card(kept, dropped)
+    [replayed] = chat.replayed(db_session)
+    assert _exec_end(replayed) == live
+
+
+@pytest.mark.usefixtures("node")
+def test_large_output_of_a_running_command_spills_from_write_stdin(
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    text = "w" * 60_000 + "\n"
+
+    def write(prompt: list[ChatCompletionMessage]) -> Delta:
+        started = re.search(r"session ID (\w+)", tool_text(prompt, "cat"))
+        assert started is not None
+        return tool_step(
+            WriteStdinTool.NAME,
+            "write",
+            {"session_id": started.group(1), "chars": text},
+        )
+
+    llm = ChatLLM(
+        [
+            tool_step(ExecCommandTool.NAME, "cat", {"cmd": "cat"}),
+            write,
+            Delta(content="Done."),
+        ]
+    )
+    chat.send(llm)
+
+    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    assert path.endswith("_write.txt")
+    assert data == text.encode()
+    shown = last_tool_text(llm, "write")
+    assert "Process running with session ID " in shown
+    assert shown.endswith(f"Output:\n{_preview(path, text)}")
+    [_, saved] = _saved_results(db_session, chat.chat_session_id)
+    assert saved.content == shown
+    assert isinstance(saved.details, SandboxExecResult)
+    assert saved.details.spilled == SpilledOutput(head=text[:2000], tail=text[-1000:])
+    [replayed] = chat.replayed(db_session)
+    [_, end] = [
+        obj for obj in _sandbox_packets(replayed) if isinstance(obj, packets.ExecEnd)
+    ]
+    assert end.output == _card(text)

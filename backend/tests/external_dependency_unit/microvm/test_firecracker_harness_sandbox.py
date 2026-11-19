@@ -1047,6 +1047,8 @@ def test_the_factory_needs_harness_sandboxes(
 def test_collect_exec_result_reads_the_stream_to_its_end() -> None:
     result = ExecCommandResult(
         output="x",
+        retained_output="x",
+        omitted_bytes=0,
         session_id=None,
         exit_code=0,
         completion="exited",
