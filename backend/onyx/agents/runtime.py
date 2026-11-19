@@ -72,6 +72,7 @@ from onyx.agents.models import (
     ToolCallContext,
     ToolExecutionRecord,
     ToolResultAmendment,
+    ToolResultContext,
     cancellation_failure,
     messages_from_steps,
 )
@@ -261,6 +262,7 @@ class Agent:
         | None = None,
         after_tool_call: Callable[[ToolCallContext, ToolResult], ToolResult]
         | None = None,
+        prepare_tool_result: Callable[[ToolResultContext], ToolResult] | None = None,
         on_finish: ReleaseHook | None = None,
         on_suspend: ReleaseHook | None = None,
         on_drained: Callable[[], None] | None = None,
@@ -294,6 +296,10 @@ class Agent:
         self.after_step = after_step
         self.before_tool_call = before_tool_call
         self.after_tool_call = after_tool_call
+        # Replaces a completed result before the run records and streams it,
+        # so the live events, the saved history and the model see the same
+        # result. Results arrive one at a time, in the order calls complete.
+        self.prepare_tool_result = prepare_tool_result
         self.on_finish = on_finish
         # Called when the run suspends, before its state is captured.
         self.on_suspend = on_suspend
@@ -580,6 +586,12 @@ class Run:
         self.after_tool_call: (
             Callable[[ToolCallContext, ToolResult], ToolResult] | None
         ) = None
+        self._prepare_tool_result: Callable[[ToolResultContext], ToolResult] | None = (
+            None
+        )
+        # Serializes prepare_tool_result and recording, so each call of the
+        # hook sees every result recorded before it.
+        self._result_lock = threading.Lock()
         self._on_finish: ReleaseHook | None = None
         self._on_suspend: ReleaseHook | None = None
         self._on_drained: Callable[[], None] | None = None
@@ -795,37 +807,61 @@ class Run:
     def record_tool_results(
         self, result: ToolResult, calls: Sequence[ToolCall]
     ) -> None:
-        """Record the result of calls; `finish_tool` later ends them."""
-        # Checkpoint capture must not split a completed batch.
-        with self.execution_lock:
-            self.cancellation_signal.check()
-            if not self.is_accepting:
-                logger.warning("Tool batch completed after its run closed: %s", self.id)
-                raise AgentCancelled()
-            record = self._state.steps[self._progress.step_index]
-            message_id = record.message.id
-            if message_id is None:
-                raise RuntimeError("Tool execution requires a message ID")
-            for call in calls:
-                execution = record.tools[call.id]
-                execution.result = _tool_result_message(result, call, message_id)
-                execution.status = (
-                    ExecutionStatus.ERROR
-                    if result.is_error
-                    else ExecutionStatus.COMPLETE
-                )
-                self.publish_event(
-                    ToolUpdateEvent(
-                        **self.event_context,
+        """Record the result of calls, after `prepare_tool_result` replaces
+        it; `finish_tool` later ends them. Call without the execution lock."""
+        with self._result_lock:
+            if self._prepare_tool_result is not None:
+                with self.execution_lock:
+                    self.cancellation_signal.check()
+                    record = self._state.steps[self._progress.step_index]
+                    message_id = record.message.id
+                    if message_id is None:
+                        raise RuntimeError("Tool execution requires a message ID")
+                    step_results = tuple(
+                        execution.result
+                        for execution in record.tools.values()
+                        if execution.result is not None
+                    )
+                result = self._prepare_tool_result(
+                    ToolResultContext(
                         message_id=message_id,
-                        step_index=self._progress.step_index,
-                        tool_call=call,
-                        progress=ToolProgress(
-                            content="" if result.is_error else result.text,
-                            details=result.details,
-                        ),
+                        calls=tuple(calls),
+                        result=result,
+                        step_results=step_results,
                     )
                 )
+            # Checkpoint capture must not split a completed batch.
+            with self.execution_lock:
+                self.cancellation_signal.check()
+                if not self.is_accepting:
+                    logger.warning(
+                        "Tool batch completed after its run closed: %s", self.id
+                    )
+                    raise AgentCancelled()
+                record = self._state.steps[self._progress.step_index]
+                message_id = record.message.id
+                if message_id is None:
+                    raise RuntimeError("Tool execution requires a message ID")
+                for call in calls:
+                    execution = record.tools[call.id]
+                    execution.result = _tool_result_message(result, call, message_id)
+                    execution.status = (
+                        ExecutionStatus.ERROR
+                        if result.is_error
+                        else ExecutionStatus.COMPLETE
+                    )
+                    self.publish_event(
+                        ToolUpdateEvent(
+                            **self.event_context,
+                            message_id=message_id,
+                            step_index=self._progress.step_index,
+                            tool_call=call,
+                            progress=ToolProgress(
+                                content="" if result.is_error else result.text,
+                                details=result.details,
+                            ),
+                        )
+                    )
 
     def record_pending_tool(
         self, call: ToolCall, pending: PendingToolInput | ChildRunWait | NestedInputWait
@@ -1117,6 +1153,7 @@ class Run:
                 name for tool in agent._tools for name in tool.approval_required
             )
             self.after_tool_call = agent.after_tool_call
+            self._prepare_tool_result = agent.prepare_tool_result
             self._on_finish = agent.on_finish
             self._on_suspend = agent.on_suspend
             self._on_drained = agent.on_drained

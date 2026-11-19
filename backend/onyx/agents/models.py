@@ -278,6 +278,22 @@ class ToolCallContext(BaseModel):
     messages: list[Message]
 
 
+class ToolResultContext(BaseModel):
+    """A completed result that the run has not recorded yet; see
+    `Agent.prepare_tool_result`. The fields reference the run's objects, not
+    copies, because results can be large: read them, and return a new result
+    to replace `result`."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # The step's assistant message.
+    message_id: str
+    # The calls that share the result: one, or a merged batch.
+    calls: tuple[ToolCall, ...]
+    result: ToolResult
+    # The results of this step that the run recorded before this one.
+    step_results: tuple[ToolResultMessage, ...]
+
+
 class StepResult(BaseModel):
     step: AgentStep
     message: AssistantMessage

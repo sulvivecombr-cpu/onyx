@@ -68,6 +68,7 @@ from onyx.db.models import (
     Sandbox,
     User,
 )
+from onyx.db.models import ToolCall as ToolCallRecord
 from onyx.db.persona import upsert_persona
 from onyx.db.sandbox import (
     create_sandbox__no_commit,
@@ -144,7 +145,7 @@ from onyx.server.query_and_chat.models import (
 from onyx.server.query_and_chat.streaming_models import StreamingError
 from onyx.tools.constants import SPAWN_AGENT_TOOL_NAME
 from onyx.tools.interface import Tool
-from onyx.tools.models import ToolContext, ToolOptions
+from onyx.tools.models import CustomToolCallSummary, ToolContext, ToolOptions
 from onyx.tools.tool_constructor import construct_tools
 from onyx.tools.tool_implementations.code_mode import cells
 from onyx.tools.tool_implementations.sandbox import sandbox_tools
@@ -165,6 +166,7 @@ from onyx.tools.tool_implementations.sandbox.sandbox_tools import (
     WriteStdinTool,
     WriteTool,
 )
+from onyx.tools.tool_implementations.sandbox.spill import TOOL_RESULTS_DIR
 from onyx.tools.tool_implementations.sandbox.turn import SandboxTurn
 from tests.external_dependency_unit.chat.test_chat_tool_approvals import ACTION
 from tests.external_dependency_unit.chat.test_parked_agent_handoff import _gated
@@ -198,6 +200,7 @@ from tests.external_dependency_unit.microvm.fake_agent import (
     RunningFakeAgent,
 )
 from tests.unit.onyx.agents.fakes import ScriptedLLM
+from tests.unit.onyx.tools.code_mode.fakes import FakeMCPTool
 
 pytestmark = pytest.mark.usefixtures("tenant_context")
 
@@ -2635,3 +2638,200 @@ def test_a_publish_of_too_many_files_publishes_none(
     assert result.is_error
     assert f"at most {PUBLISH_FILES_MAX_FILES} items" in result.text
     assert _published_records(db_session, tools.ref.session_id) == []
+
+
+# Large tool results
+
+
+def _offer_mcp_tool(
+    monkeypatch: pytest.MonkeyPatch, name: str, text: Callable[[str], str]
+) -> None:
+    """Add to the turn's tools an MCP tool whose result for a call is
+    `text(call_id)`, in the shape of MCPTool's results."""
+
+    def run(invocation: ToolInvocation, _context: ToolContext) -> ToolResult:
+        value: dict[str, JsonValue] = {"tool_result": text(invocation.call_id)}
+        return ToolResult(
+            content=json.dumps(value),
+            details=CustomToolCallSummary(
+                tool_name=name, response_type="json", tool_result=value
+            ),
+        )
+
+    tool = FakeMCPTool(name, run, {"type": "object", "properties": {}})
+    real_construct_tools = construct_tools
+    monkeypatch.setattr(
+        "onyx.chat.execution.construct_tools",
+        lambda **kwargs: [*real_construct_tools(**kwargs), tool],
+    )
+
+
+def _calls_step(name: str, call_ids: Sequence[str]) -> Delta:
+    """One model step that calls `name` once for each call ID."""
+    return Delta(
+        tool_calls=[
+            ChatCompletionDeltaToolCall(
+                id=call_id,
+                index=index,
+                function=ResponseFunctionCall(name=name, arguments="{}"),
+            )
+            for index, call_id in enumerate(call_ids)
+        ]
+    )
+
+
+def _custom_tool_deltas(parts: Sequence[object]) -> list[packets.CustomToolDelta]:
+    """The custom tool packets of streamed parts or replayed packets."""
+    return [
+        obj
+        for part in parts
+        if isinstance(
+            obj := part.obj if isinstance(part, packets.Packet) else part,
+            packets.CustomToolDelta,
+        )
+    ]
+
+
+def _saved_results(db_session: Session, chat_session_id: UUID) -> list[ToolResult]:
+    db_session.expire_all()
+    return [
+        row.result
+        for row in db_session.scalars(
+            select(ToolCallRecord)
+            .where(ToolCallRecord.chat_session_id == chat_session_id)
+            .order_by(ToolCallRecord.id)
+        )
+        if row.result is not None
+    ]
+
+
+def _spills(node: RunningFakeAgent, ref: HarnessSandboxRef) -> dict[str, bytes]:
+    return {
+        path: data
+        for (sandbox_id, session_id, path), data in node.agent.files.items()
+        if sandbox_id == str(ref.sandbox_id)
+        and not session_id
+        and path.startswith(TOOL_RESULTS_DIR + "/")
+    }
+
+
+def _big(call_id: str) -> str:
+    return f"HEAD-{call_id} " + "m" * 60_000 + f" TAIL-{call_id}"
+
+
+@pytest.mark.usefixtures("node")
+def test_a_large_mcp_result_spills_to_the_vm_and_the_history_keeps_the_preview(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    _offer_mcp_tool(monkeypatch, "fetch_report", _big)
+    llm = ChatLLM([tool_step("fetch_report", "big", {}), Delta(content="Done.")])
+    parts = chat.send(llm)
+
+    full = json.dumps({"tool_result": _big("big")})
+    shown = last_tool_text(llm, "big")
+    # The write woke the VM, which no call had started.
+    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    assert data == full.encode()
+    assert path.endswith("_big.txt")
+    assert shown == (
+        f'<persisted-output path="{path}" bytes={len(full)} lines=1>\n'
+        f"Preview (first 2,000 characters):\n{full[:2000]}\n"
+        f"Preview (last 1,000 characters):\n{full[-1000:]}\n"
+        "The full output is saved. Use exec_command (grep, sed, head, tail) on "
+        "the path for the rest.\n</persisted-output>"
+    )
+    # The history keeps only what the model got, in the content and the details.
+    [saved] = _saved_results(db_session, chat.chat_session_id)
+    assert saved.content == shown
+    assert isinstance(saved.details, CustomToolCallSummary)
+    assert saved.details.tool_result == shown
+    live = _custom_tool_deltas(parts)
+    assert [delta.data for delta in live] == [shown]
+    [replayed] = chat.replayed(db_session)
+    assert _custom_tool_deltas(replayed) == live
+
+
+@pytest.mark.usefixtures("node")
+def test_results_after_the_step_budget_is_used_up_spill(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    # Each result is under the limit of one result; five are over the budget.
+    def text(call_id: str) -> str:
+        return call_id + "x" * 45_000
+
+    _offer_mcp_tool(monkeypatch, "fetch_page", text)
+    call_ids = [f"page{index}" for index in range(5)]
+    llm = ChatLLM([_calls_step("fetch_page", call_ids), Delta(content="Done.")])
+    chat.send(llm)
+
+    shown = {call_id: last_tool_text(llm, call_id) for call_id in call_ids}
+    spilled = [
+        call_id
+        for call_id, content in shown.items()
+        if content.startswith("<persisted-output ")
+    ]
+    # The results that arrived first used the budget; the last one spilled.
+    assert len(spilled) == 1
+    for call_id in call_ids:
+        if call_id not in spilled:
+            assert shown[call_id] == json.dumps({"tool_result": text(call_id)})
+    [(path, data)] = _spills(node, chat.ref(db_session)).items()
+    assert path.endswith(f"_{spilled[0]}.txt")
+    assert data == json.dumps({"tool_result": text(spilled[0])}).encode()
+
+
+@pytest.mark.usefixtures("node")
+def test_a_large_result_that_the_vm_cannot_take_keeps_its_head_and_tail(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    node.agent.write_file_error = SandboxDaemonErrorReason.INTERNAL
+    _offer_mcp_tool(monkeypatch, "fetch_report", _big)
+    llm = ChatLLM([tool_step("fetch_report", "big", {}), Delta(content="Done.")])
+    chat.send(llm)
+
+    full = json.dumps({"tool_result": _big("big")})
+    shown = last_tool_text(llm, "big")
+    assert shown == (
+        full[:2000]
+        + f"\n... [output truncated, {len(full) - 3000} characters omitted] ...\n"
+        + full[-1000:]
+        + "\n[The result was too large, and the sandbox could not save the full "
+        "text, so the middle is left out.]"
+    )
+    assert _spills(node, chat.ref(db_session)) == {}
+    [saved] = _saved_results(db_session, chat.chat_session_id)
+    assert saved.content == shown
+    assert isinstance(saved.details, CustomToolCallSummary)
+    assert saved.details.tool_result == shown
+
+
+@pytest.mark.usefixtures("node")
+def test_a_chat_without_a_sandbox_keeps_a_large_result_whole(
+    monkeypatch: pytest.MonkeyPatch,
+    db_session: Session,
+    node: RunningFakeAgent,
+    chat: SandboxChat,
+) -> None:
+    monkeypatch.setattr(process_message, "HARNESS_SANDBOX_ENABLED", False)
+    _offer_mcp_tool(monkeypatch, "fetch_report", _big)
+    llm = ChatLLM([tool_step("fetch_report", "big", {}), Delta(content="Done.")])
+    chat.send(llm)
+
+    value = {"tool_result": _big("big")}
+    assert ExecCommandTool.NAME not in str(llm.requests[0].get("tools"))
+    assert last_tool_text(llm, "big") == json.dumps(value)
+    [saved] = _saved_results(db_session, chat.chat_session_id)
+    assert isinstance(saved.details, CustomToolCallSummary)
+    assert saved.details.tool_result == value
+    assert not any(
+        path.startswith(TOOL_RESULTS_DIR) for (_, _, path) in node.agent.files
+    )

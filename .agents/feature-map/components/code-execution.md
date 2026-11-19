@@ -312,6 +312,23 @@ exec_command / write_stdin / apply_patch | edit + write / publish_files (no tool
                                         and files of one name are versions of one file.
                                         save_chat_turn adds the files to the response's
                                         ChatMessage.files ([[chat-persistence]])
+  Agent.prepare_tool_result (ChatAgent) sandbox/spill.py:spill_large_result, when the agent's
+                                        configured tools hold a SandboxTool (its turn;
+                                        restored agents and subagents get the same tools).
+                                        Before the run records and streams a result of any
+                                        tool but exec_command, write_stdin, read_file and
+                                        skills_read: over RESULT_MAX_CHARS (50,000) or
+                                        RESULT_MAX_LINES (2,000), or past the step's
+                                        STEP_MAX_CHARS (200,000) of recorded results, it is
+                                        written (at most 64 MiB) to /tmp/onyx/tool-results/
+                                        <step message ID>_<call ID>.txt with
+                                        write_onyx_file, which wakes the VM. The model, the
+                                        live packets and the saved row get <persisted-output>:
+                                        the path and the first 2,000 and last 1,000
+                                        characters; a CustomToolCallSummary.tool_result
+                                        becomes that text. A failed write keeps the head and
+                                        tail with a note. Calls inside a code mode program
+                                        skip it; the cell's result can spill
   Agent.on_drained (root ChatAgent)     SandboxTurn.end: create_chat_agent passes it to the
                                         root chat agent only (bind_run_store: also to a
                                         restored root), not to subagents or deep research

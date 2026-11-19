@@ -163,6 +163,8 @@ class FakeHostAgent(hostagent_pb2_grpc.HostAgentServicer):
         self.path_stats: dict[tuple[str, str, str], sandboxd_pb2.PathStat] = {}
         # The data message sizes of each WriteFile, in order.
         self.write_chunk_sizes: list[list[int]] = []
+        # WriteFile fails with this reason (for example, a full disk).
+        self.write_file_error: SandboxDaemonErrorReason | None = None
         # ZipFiles fails with LIMIT_EXCEEDED over this many input bytes.
         self.zip_max_input_bytes: int | None = None
         # Spooled captures by ID, and "object storage" by presigned URL.
@@ -1264,6 +1266,8 @@ class FakeSandboxd(sandboxd_pb2_grpc.SandboxdServicer):
         with self.agent.lock:
             self.agent.write_chunk_sizes.append(sizes)
             sandbox_id = self._ready(context)
+            if self.agent.write_file_error is not None:
+                abort_daemon(context, self.agent.write_file_error, "write failed")
             key = self._file_key(context, sandbox_id, header.session_id, header.path)
             path = key[2]
             if key in self.agent.files and not header.overwrite:

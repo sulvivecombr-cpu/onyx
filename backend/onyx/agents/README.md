@@ -238,8 +238,12 @@ Two optional tool callbacks cover interception and enrichment:
 | --- | --- |
 | `before_tool_call` | Return a `ToolResult` to skip execution, `PendingToolInput` to await input, or `None` to proceed. |
 | `after_tool_call` | Enrich an already accepted result. Failure preserves that result and fails the run. |
+| `prepare_tool_result` | Replace a completed result before the run records and streams it. Failure fails the run. |
 
-Callbacks receive copies. Required transformations belong inside the tool, before it returns a valid result.
+Callbacks receive copies, except `prepare_tool_result`: results can be large, so its `ToolResultContext` references the run's objects, and the hook returns a new result instead of changing them.
+`Run.record_tool_results` calls it for every result, one at a time in the order the calls complete, with the results of the step that the run recorded before.
+Its result is what the live `tool_update` event, the saved history and the model get.
+Chat uses it to save large results to a file in the sandbox VM (`tools/tool_implementations/sandbox/spill.py`). Required transformations belong inside the tool, before it returns a valid result.
 A tool that calls other tools for the model, such as a code mode program, gets `ToolInvocation.nested_calls`, a `NestedCallGate`.
 `NestedCallGate.decide` applies `before_tool_call`, then the approval gate below, to each of those calls.
 A decision that waits for input is an open `NestedInputRequest`: the run publishes `input_required` at once, with the outer call as `tool_call` and the waiting call as `nested_call`.
