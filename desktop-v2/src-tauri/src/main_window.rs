@@ -243,6 +243,9 @@ pub async fn open(app: &AppHandle, server: &str, token: &str, path: &str) -> Res
     let epoch = app.state::<AppState>().epoch();
     let server_url = Url::parse(server).map_err(|e| e.to_string())?;
     let target = server_url.join(path).map_err(|e| e.to_string())?;
+    if crate::offline::defer_open(app, path) {
+        return Ok(());
+    }
 
     if let Some(window) = app.get_webview_window(LABEL) {
         window.navigate(target).map_err(|e| e.to_string())?;
@@ -267,13 +270,19 @@ pub async fn open(app: &AppHandle, server: &str, token: &str, path: &str) -> Res
         .initialization_script(LINK_SHIM_JS)
         .on_page_load(|window, payload| {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                crate::offline::load_finished(window.app_handle());
                 sync_chrome(window.app_handle());
             }
         })
         // Let the web page receive dropped files (chat attachments).
         .disable_drag_drop_handler()
         .on_navigation(move |url| match classify(url, &nav_origin) {
-            LinkAction::Allow => true,
+            LinkAction::Allow => {
+                if matches!(url.scheme(), "http" | "https") {
+                    crate::offline::watch_load(&nav_app, url);
+                }
+                true
+            }
             LinkAction::External => {
                 open_external(&nav_app, url.as_str());
                 false

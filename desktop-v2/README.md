@@ -48,6 +48,15 @@ Linux builds are a preview (see [Windows and Linux](#windows-and-linux)). It liv
   `native_app_sso`. SAML, cloud workspaces and older servers use the web login page in an app
   window.
 - The app renews the session on launch and every 12 hours, so regular use never signs you out.
+- Offline window (`src-tauri/src/offline.rs`, `src/pages/Offline.tsx`). If the server cannot
+  be reached at launch, or a main-window page does not load and the server then fails two
+  health checks (`GET /api/version`), the main window hides and a small window shows "Can't
+  reach <host>" with the reason: no network, DNS, TLS certificate, timeout, connection refused
+  or a 5xx error. It checks again after 2, 4, 8, 15, 30, then every 60 seconds, at once when
+  the network comes back, and on **Retry**. When the server answers, the main window loads the
+  page again. A page that already loaded stays when the network drops for a short time.
+  Closing the window stops the checks. The launcher shows one line for the same errors:
+  "Can't reach <host>. Check your connection." (`src-tauri/src/reachability.rs`).
 
 Closing the main window keeps the app running in the menu bar; the Dock icon, the tray's
 **Open Onyx** or a second launch brings it back.
@@ -207,10 +216,12 @@ On macOS. For Windows and Linux, see [Windows and Linux](#windows-and-linux).
 
 ## Security boundary
 
-- Only the bundled windows (onboarding, login, preferences, launcher)
+- Only the bundled windows (onboarding, login, preferences, launcher, offline)
   can call app commands. Every app command needs an explicit permission (`build.rs` app
   manifest), and the capability in `src-tauri/capabilities/local.json` grants them to those
-  windows only. The remote main window gets no app command.
+  windows only. The offline window has its own capability (`capabilities/offline.json`) with
+  only the status, retry and change-server commands. The remote main window gets no app
+  command.
 - The main window gets just two built-in window permissions, on the configured server's origin
   only: start dragging and title-bar zoom (for its drag regions).
 - Local windows have a strict CSP (`script-src 'self'`, `connect-src` limited to IPC). The
