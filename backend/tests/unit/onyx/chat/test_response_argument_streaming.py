@@ -1,15 +1,17 @@
 """Chat decodes streamed arguments only for tools with live argument display.
 
-Every test runs under two clocks: one where each fragment reports, and one
-that stands still, so only the first fragment reports before the end.
+The tests that depend on the report throttle, the flush or the end run under
+two clocks: one where each fragment reports, and one that stands still, so
+only the first fragment of a call reports before a block boundary or the end.
 """
 
 import json
 from collections.abc import Iterable
-from typing import Literal
+from typing import Literal, get_args
 from unittest.mock import patch
 
 import pytest
+from pydantic import JsonValue
 
 from onyx.agents.events import (
     AgentEndEvent,
@@ -20,10 +22,11 @@ from onyx.agents.events import (
 from onyx.agents.models import ExecutionStatus, RunStatus, StepRecord
 from onyx.chat import renderer as renderer_module
 from onyx.chat.emitter import Emitter
-from onyx.chat.models import MessageRendering, PresentationMode, ResponseRecord
+from onyx.chat.models import MessageRendering, ResponseRecord
 from onyx.chat.presentation import ResponsePresenter, replay_response
 from onyx.chat.renderer import (
     ARGUMENT_REPORT_INTERVAL_SECONDS,
+    FILE_TOOL_TEXT_ARGUMENTS,
     MessageRenderer,
     ResponseLayout,
     file_tool_progress,
@@ -51,12 +54,17 @@ from onyx.llm.models import (
 from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import (
     ApplyPatchStart,
+    ExecCommandStart,
     FileToolProgress,
     Packet,
+    PacketObj,
+    PublishFilesStart,
     PythonToolStart,
+    ReasoningDelta,
     ToolCallArgumentDelta,
 )
 from onyx.tools.tool_implementations.code_mode.code_mode_tool import CodeModeTool
+from onyx.tools.tool_implementations.sandbox.models import FileToolName
 from onyx.tools.tool_implementations.sandbox.patch import display_patch
 
 
@@ -72,15 +80,15 @@ class Clock:
         return self.now
 
 
-@pytest.fixture(
-    autouse=True,
-    params=[ARGUMENT_REPORT_INTERVAL_SECONDS, 0.0],
-    ids=["each", "stopped"],
-)
-def clock(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Clock:
-    clock = Clock(request.param)
+def use_clock(monkeypatch: pytest.MonkeyPatch, step: float) -> Clock:
+    clock = Clock(step)
     monkeypatch.setattr(renderer_module, "monotonic", clock)
     return clock
+
+
+@pytest.fixture(params=[ARGUMENT_REPORT_INTERVAL_SECONDS, 0.0], ids=["each", "stopped"])
+def clock(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> Clock:
+    return use_clock(monkeypatch, request.param)
 
 
 def chunk(
@@ -180,6 +188,7 @@ class Live:
     ],
 )
 @pytest.mark.parametrize("size", [1, 3, 1000])
+@pytest.mark.usefixtures("clock")
 def test_decoded_strings_survive_arbitrary_fragment_boundaries(
     text: str, size: int
 ) -> None:
@@ -194,6 +203,7 @@ def test_decoded_strings_survive_arbitrary_fragment_boundaries(
     assert live.accumulator.message.tool_calls[0].arguments == json.loads(raw)
 
 
+@pytest.mark.usefixtures("clock")
 def test_interleaved_calls_have_independent_arguments_and_identities() -> None:
     live = Live()
     for index, fragment in [
@@ -260,6 +270,7 @@ def test_search_arguments_do_not_need_partial_json_parsing() -> None:
     }
 
 
+@pytest.mark.usefixtures("clock")
 def test_invalid_python_arguments_stop_display_but_retain_raw_input() -> None:
     live = Live()
     # A raw newline is not valid inside a JSON string.
@@ -272,6 +283,7 @@ def test_invalid_python_arguments_stop_display_but_retain_raw_input() -> None:
     assert live.accumulator.message.tool_calls[0].argument_error is not None
 
 
+@pytest.mark.usefixtures("clock")
 @pytest.mark.parametrize("name", ["run_python", "think", "write"])
 def test_an_invalid_call_shows_every_fragment_it_streamed(name: str) -> None:
     """Arguments cut off at the token limit end the call with an error and
@@ -292,6 +304,7 @@ def test_an_invalid_call_shows_every_fragment_it_streamed(name: str) -> None:
         )
 
 
+@pytest.mark.usefixtures("clock")
 @pytest.mark.parametrize("how", ["complete", "finish"])
 def test_interrupted_think_tool_replays_the_streamed_reasoning(
     how: Literal["complete", "finish"],
@@ -312,6 +325,7 @@ def test_interrupted_think_tool_replays_the_streamed_reasoning(
     assert not saved.tool_calls[0].arguments_complete
 
 
+@pytest.mark.usefixtures("clock")
 @pytest.mark.parametrize("how", ["complete", "finish"])
 def test_interrupted_python_call_replays_the_streamed_code(
     how: Literal["complete", "finish"],
@@ -343,38 +357,81 @@ def test_interrupted_python_call_replays_the_streamed_code(
     assert not saved.steps[0].tools
 
 
-def test_code_argument_streams_live_as_execute_code() -> None:
-    renderer = MessageRenderer(
-        MessageRendering(mode=PresentationMode.ANSWER), {}, ResponseLayout()
-    )
-    renderer.consume(
-        ToolCallStartEvent(
-            content_index=0, tool_call_id="code-1", tool_name=CodeModeTool.NAME
-        )
-    )
-    [packet] = renderer.consume(
-        ToolCallDeltaEvent(content_index=0, arguments_delta='{"code": "print(1)')
-    )
-    assert isinstance(packet.obj, ToolCallArgumentDelta)
-    assert packet.obj.tool_type == CodeModeTool.NAME
-    assert packet.obj.argument_deltas == {"code": "print(1)"}
+def code_deltas(packets: list[Packet], name: str) -> list[str]:
+    return [
+        packet.obj.argument_deltas["code"]
+        for packet in packets
+        if isinstance(packet.obj, ToolCallArgumentDelta)
+        and packet.obj.tool_type == name
+    ]
 
 
 @pytest.mark.parametrize("name", ["run_python", CodeModeTool.NAME])
-def test_code_reports_merge_the_text_between_them(clock: Clock, name: str) -> None:
-    clock.step = 0
+def test_code_reports_merge_the_text_between_them(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    use_clock(monkeypatch, 0)
     live = Live()
     for fragment in ['{"code": "a', *["b"] * 100, 'c"}']:
         live.add(fragment, name=name)
     # The first fragment reports; the rest wait for the interval or the end.
-    assert live.code() == "a"
+    assert code_deltas(live.packets, name) == ["a"]
     live.end()
-    deltas = [
-        packet.obj.argument_deltas["code"]
-        for packet in live.packets
-        if isinstance(packet.obj, ToolCallArgumentDelta)
-    ]
-    assert deltas == ["a", "b" * 100 + "c"]
+    assert code_deltas(live.packets, name) == ["a", "b" * 100 + "c"]
+
+
+def test_a_report_after_the_interval_holds_the_fragments_since_the_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Each fragment arrives half an interval after the one before.
+    use_clock(monkeypatch, ARGUMENT_REPORT_INTERVAL_SECONDS / 2)
+    live = Live()
+    for fragment in ['{"code": "a', "b", "c", "d"]:
+        live.add(fragment)
+    # "b" waits for the interval; "c" reports it with itself; "d" waits.
+    assert code_deltas(live.packets, "run_python") == ["a", "bc"]
+    live.add('"}')
+    live.end()
+    assert code_deltas(live.packets, "run_python") == ["a", "bc", "d"]
+
+
+@pytest.mark.usefixtures("clock")
+def test_held_reasoning_reports_before_the_next_call_as_on_replay() -> None:
+    """A think call's held fragments show before the call that follows it in
+    the message, in one reasoning section, as replay shows them."""
+    settings = MessageRendering(think_tool="think")
+    live = Live(settings)
+    for index, name, fragment in [
+        (0, "think", '{"reasoning": "check '),
+        (0, "think", 'the sources"}'),
+        (1, "run_python", '{"code": "print(1)"}'),
+    ]:
+        live.add(fragment, index, name)
+    live.end()
+    replay = MessageRenderer(settings, {}, ResponseLayout()).complete(
+        AssistantMessage.model_validate_json(live.accepted.model_dump_json())
+    )
+
+    def sections(packets: list[Packet]) -> list[tuple[Placement, PacketObj]]:
+        # Live reasoning arrives in more deltas than replay sends.
+        shown: list[tuple[Placement, PacketObj]] = []
+        for packet in packets:
+            obj = packet.obj
+            if isinstance(obj, ToolCallArgumentDelta):
+                continue
+            if shown and isinstance(obj, ReasoningDelta):
+                placement, last = shown[-1]
+                if isinstance(last, ReasoningDelta) and placement == packet.placement:
+                    shown[-1] = (
+                        placement,
+                        ReasoningDelta(reasoning=last.reasoning + obj.reasoning),
+                    )
+                    continue
+            shown.append((packet.placement, obj))
+        return shown
+
+    assert sections(live.packets) == sections(replay)
+    assert live.code() == "print(1)"
 
 
 PATCH_TEXT = "\n".join(
@@ -413,6 +470,7 @@ PATCH_TEXT = "\n".join(
 )
 @pytest.mark.parametrize("ensure_ascii", [True, False])
 @pytest.mark.parametrize("size", [1, 3, 1000])
+@pytest.mark.usefixtures("clock")
 def test_file_progress_survives_arbitrary_fragment_boundaries(
     name: str,
     arguments: dict[str, str],
@@ -436,9 +494,9 @@ def test_file_progress_survives_arbitrary_fragment_boundaries(
 
 
 def test_file_reports_are_throttled_and_merge_the_text_between_them(
-    clock: Clock,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    clock.step = 0
+    use_clock(monkeypatch, 0)
     live = Live()
     live.add('{"file_path": "a.txt", "content": "', name="write")
     for _ in range(1000):
@@ -452,6 +510,7 @@ def test_file_reports_are_throttled_and_merge_the_text_between_them(
     assert len(live.packets) == 2
 
 
+@pytest.mark.usefixtures("clock")
 def test_a_report_that_changes_nothing_sends_no_packet() -> None:
     live = Live()
     for fragment in ['{"file_path": "a.txt", "content": "x', "y", "z", '"}']:
@@ -462,6 +521,7 @@ def test_a_report_that_changes_nothing_sends_no_packet() -> None:
     ]
 
 
+@pytest.mark.usefixtures("clock")
 def test_parallel_file_calls_report_their_own_progress() -> None:
     live = Live()
     for index, name, fragment in [
@@ -484,6 +544,7 @@ def test_parallel_file_calls_report_their_own_progress() -> None:
     }
 
 
+@pytest.mark.usefixtures("clock")
 def test_invalid_file_arguments_stop_progress() -> None:
     live = Live()
     # A raw newline is not valid inside a JSON string.
@@ -498,9 +559,9 @@ def test_invalid_file_arguments_stop_progress() -> None:
 
 @pytest.mark.parametrize("how", ["complete", "finish"])
 def test_an_interrupted_file_call_reports_its_last_fragments(
-    clock: Clock, how: Literal["complete", "finish"]
+    monkeypatch: pytest.MonkeyPatch, how: Literal["complete", "finish"]
 ) -> None:
-    clock.step = 0
+    use_clock(monkeypatch, 0)
     live = Live()
     for fragment in ['{"input": "*** Begin Patch\\n', "*** Add File: a.md\\n+x"]:
         live.add(fragment, name="apply_patch")
@@ -514,6 +575,7 @@ def test_an_interrupted_file_call_reports_its_last_fragments(
     )
 
 
+@pytest.mark.usefixtures("clock")
 def test_a_stopped_file_call_shows_as_on_replay_apart_from_its_progress() -> None:
     output: list[Packet] = []
     presenter = ResponsePresenter(Emitter(output.append))
@@ -612,8 +674,27 @@ def test_a_file_path_shows_once_whole(
     assert file_tool_progress("write", dict(arguments), complete).paths == paths
 
 
-def test_a_file_call_with_wrong_typed_arguments_keeps_the_patch_card() -> None:
-    call = ToolCall(id="c", name="write", arguments={"file_path": None, "content": "x"})
+@pytest.mark.parametrize(
+    "name,arguments,start",
+    [
+        (
+            "write",
+            {"file_path": None, "content": "x"},
+            ApplyPatchStart(patch=display_patch("", None, ""), tool_name="write"),
+        ),
+        ("exec_command", {"cmd": ["ls"]}, ExecCommandStart(cmd="")),
+        ("publish_files", {"files": "a.md"}, PublishFilesStart()),
+    ],
+)
+def test_a_call_with_wrong_typed_arguments_keeps_its_own_card(
+    name: str, arguments: dict[str, JsonValue], start: PacketObj
+) -> None:
+    """A tool with its own end packet starts its own card with empty values."""
+    call = ToolCall(id="c", name=name, arguments=arguments)
     assert [
         packet.obj for packet in tool_renderer(call, Placement(turn_index=0)).start()
-    ] == [ApplyPatchStart(patch=display_patch("", None, "x"), tool_name="write")]
+    ] == [start]
+
+
+def test_each_file_tool_names_its_text_argument() -> None:
+    assert set(FILE_TOOL_TEXT_ARGUMENTS) == set(get_args(FileToolName))
