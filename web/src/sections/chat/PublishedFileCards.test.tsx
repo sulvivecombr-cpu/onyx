@@ -71,6 +71,40 @@ test("a card shows the title, type and size, and downloads the file", () => {
   expect(downloads[1]).toHaveAttribute("href", "/api/chat/file/file-2");
 });
 
+test("files that show one name also show their path in the chat's folder", () => {
+  const workspace =
+    "/home/onyx/workspaces/0e3b8a52-4b1f-4c5e-9d0a-1a2b3c4d5e6f";
+  const csv = (fileId: string, path: string, title: string | null = null) => ({
+    file_id: fileId,
+    name: path.split("/").pop() ?? path,
+    title,
+    path,
+    size: 512,
+    mime_type: "text/csv",
+  });
+  render(
+    <PublishedFileCards
+      files={[
+        csv("drafts", `${workspace}/drafts/summary.csv`),
+        csv("final", `${workspace}/final/summary.csv`),
+        csv("outside", "/tmp/onyx/summary.csv"),
+        csv("unique", `${workspace}/drafts/report.csv`),
+        // Only a title shares a name with nothing: it shows no path.
+        csv("titled", `${workspace}/other/summary.csv`, "Summary"),
+      ]}
+    />
+  );
+
+  const descriptions = [
+    ...screen.getAllByRole("button", { name: /^Preview / }),
+  ].map((card) => card.textContent);
+  expect(descriptions[0]).toContain("drafts/summary.csv · CSV · 512");
+  expect(descriptions[1]).toContain("final/summary.csv · CSV · 512");
+  expect(descriptions[2]).toContain("/tmp/onyx/summary.csv · CSV · 512");
+  expect(descriptions[3]).not.toContain("drafts/");
+  expect(descriptions[4]).not.toContain("other/");
+});
+
 test("an HTML file previews as source, not as a rendered page", async () => {
   jest.mocked(fetchChatFile).mockResolvedValue(htmlResponse());
   const view = render(

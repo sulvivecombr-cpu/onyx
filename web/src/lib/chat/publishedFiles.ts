@@ -7,6 +7,14 @@ import type { ChatPublishedFile, Message } from "@/app/app/types";
 import type { MessageTreeState } from "@/app/app/services/messageTree";
 import { type CachedRead, readOnce } from "@/lib/chat/packetReads";
 
+// The chat's working directory in the VM (`session_workspace` in the backend)
+const WORKSPACE_PREFIX = /^\/home\/onyx\/workspaces\/[^/]+\//;
+
+/** A published file's VM path, relative to the chat's working directory. */
+export function workspacePath(path: string): string {
+  return path.replace(WORKSPACE_PREFIX, "");
+}
+
 const publishedFileReads = new WeakMap<Packet[], CachedRead<PublishedFile[]>>();
 const PUBLISH_END_PACKETS: ReadonlySet<string> = new Set([
   PacketType.PUBLISH_FILES_END,

@@ -11,6 +11,7 @@ import { DownloadButton } from "@/sections/modals/PreviewModal/variants/shared";
 import { useFormatBytes } from "@/hooks/useFormatBytes";
 import { getFileIcon } from "@/lib/utils";
 import type { MinimalOnyxDocument } from "@/lib/search/types";
+import { workspacePath } from "@/lib/chat/publishedFiles";
 
 interface PublishedFileCardsProps {
   files: PublishedFile[];
@@ -32,6 +33,14 @@ export function PublishedFileCards({ files }: PublishedFileCardsProps) {
   const formatBytes = useFormatBytes();
   const previewModal = useCreateModal();
   const [previewing, setPreviewing] = useState<PublishedFile | null>(null);
+
+  // Files of one shown name also show their path, which tells them apart
+  const sharedNames = useMemo(() => {
+    const names = files.map((file) => file.title ?? file.name);
+    return new Set(
+      names.filter((name, index) => names.indexOf(name) !== index)
+    );
+  }, [files]);
 
   // Stable per file: PreviewModal refetches when this object changes.
   const presentingDocument = useMemo<MinimalOnyxDocument>(
@@ -60,7 +69,13 @@ export function PublishedFileCards({ files }: PublishedFileCardsProps) {
               <AttachmentItemButton
                 icon={getFileIcon(file.name)}
                 title={file.title ?? file.name}
-                description={[fileTypeLabel(file.name), formatBytes(file.size)]
+                description={[
+                  sharedNames.has(file.title ?? file.name)
+                    ? workspacePath(file.path)
+                    : "",
+                  fileTypeLabel(file.name),
+                  formatBytes(file.size),
+                ]
                   .filter(Boolean)
                   .join(" · ")}
                 aria-label={t("card.preview.ariaLabel", { name: file.name })}

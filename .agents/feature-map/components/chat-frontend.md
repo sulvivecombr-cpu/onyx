@@ -189,7 +189,8 @@
   as a download card after the answer, with its title (else its file name),
   type and size. A click opens the file preview; HTML shows as source, never
   as a rendered page. Each card shows only its file; a later publish of the
-  same path adds a card of its own. The timeline step lists the
+  same path adds a card of its own. Cards that show one name also show their
+  path, relative to the chat's working directory. The timeline step lists the
   files that the call asked for and how it ended. Shared chats show the same
   cards.
 - **A chat with published files gets a Files button** in the chat header
@@ -200,7 +201,8 @@
   publish of it, newest first, with its title or else its name. Each previews
   and downloads like a card. When the branch has no files, the panel closes
   until the user opens it again. A closed panel (Files or Sources) cannot be
-  focused; Escape closes an open one and focus returns to its opener. On a
+  focused. Escape closes only the top layer: an open preview first, then the
+  panel, and focus returns to the panel's opener. On a
   narrow screen the panel opens as a modal.
 - **A user rates, copies or shares an answer.** Copy turns markdown tables into
   tab-separated text so a spreadsheet keeps the columns. Each answer table

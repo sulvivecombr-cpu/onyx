@@ -2,6 +2,7 @@
 
 import { type ReactNode, useEffect, useRef } from "react";
 import { cn } from "@opal/utils";
+import { useEscapeInterrupt } from "@/hooks/useEscapeInterrupt";
 
 interface ChatSidePanelProps {
   open: boolean;
@@ -52,17 +53,8 @@ export function ChatSidePanel({
     }
   }, [open]);
 
-  // A DOM listener: keys in a dialog that the panel opened do not reach it,
-  // unlike React events, which bubble through portals.
-  useEffect(() => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    panel.addEventListener("keydown", closeOnEscape);
-    return () => panel.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
+  // Esc closes only the top layer: a dialog that the panel opened first.
+  useEscapeInterrupt({ enabled: open, onInterrupt: onClose, within: panelRef });
 
   return (
     <div

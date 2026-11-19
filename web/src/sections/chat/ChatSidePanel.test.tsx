@@ -36,3 +36,32 @@ test("a closed panel is inert, and closing returns focus to its opener", () => {
   rerender(<View open={false} onClose={onClose} />);
   expect(document.activeElement).toBe(opener);
 });
+
+test("Escape closes an open preview first, and the panel on the next press", () => {
+  const onClose = jest.fn();
+  render(<View open onClose={onClose} />);
+  const inside = screen.getByText("Inside");
+
+  // A preview dialog that the panel opened. Focus stays on the card in the
+  // panel, and the dialog closes on Escape before the event bubbles.
+  const preview = document.createElement("div");
+  preview.setAttribute("role", "dialog");
+  Object.defineProperty(preview, "getClientRects", {
+    value: () => [{ width: 1, height: 1 }],
+  });
+  document.body.appendChild(preview);
+  const closePreview = (event: KeyboardEvent) => {
+    if (event.key === "Escape") preview.remove();
+  };
+  document.addEventListener("keydown", closePreview, true);
+  try {
+    fireEvent.keyDown(inside, { key: "Escape" });
+    expect(preview.isConnected).toBe(false);
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(inside, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  } finally {
+    document.removeEventListener("keydown", closePreview, true);
+  }
+});
